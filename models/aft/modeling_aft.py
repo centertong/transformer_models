@@ -1,4 +1,5 @@
 import math
+import sys
 
 import torch
 from torch._C import device
@@ -47,9 +48,9 @@ class AftBaseAttentionLayer(nn.Module):
             self.position_bias_u = nn.Parameter(torch.rand((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
             self.position_bias_v = nn.Parameter(torch.rand((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
         if self.mode == "conv":
-            self.position_bias = nn.Parameter(torch.rand((self.num_attention_heads, 1, config.local_size), dtype=torch.float32))
-            self.repara_gamma = nn.Parameter(torch.zeros((self.num_attention_heads,)))
-            self.repara_beta = nn.Parameter(torch.zeros((self.num_attention_heads,)))
+            self.position_bias = nn.Parameter(torch.rand((self.num_attention_heads, 1, config.local_size, config.local_size), dtype=torch.float32))
+            self.repara_gamma = nn.Parameter(torch.zeros((self.num_attention_heads,1, 1, 1)))
+            self.repara_beta = nn.Parameter(torch.zeros((self.num_attention_heads,1, 1, 1)))
         self.max_length = config.max_position_embeddings
         self.local_size = config.local_size
 
@@ -74,7 +75,9 @@ class AftBaseAttentionLayer(nn.Module):
         head_mask=None,
         output_attentions=False,
     ):
-
+        if hidden_states.isnan().any():
+            print("Before Attention")
+            sys.exit(1)
         query_layer = self.query(hidden_states)
         key_layer = self.key(hidden_states)
         value_layer = self.value(hidden_states)
@@ -83,9 +86,7 @@ class AftBaseAttentionLayer(nn.Module):
             key_layer = self.transpose_for_scores(key_layer)
             value_layer = self.transpose_for_scores(value_layer)
 
-        attention_mask_tmp = attention_mask[:, :, None]
-        if self.mode == "conv":
-            attention_mask_tmp = attention_mask[:, None, :, None]
+        attention_mask_tmp = attention_mask[:, :, None] if self.mode != "conv" else attention_mask[:, None, :, None]
         attention_mask_tmp = attention_mask_tmp.bool()
         value_layer.masked_fill_(~attention_mask_tmp, 0.)
 
@@ -103,12 +104,15 @@ class AftBaseAttentionLayer(nn.Module):
         elif self.mode == "simple":
             context_layer = AftSimple(query_layer, key_layer, value_layer)
         elif self.mode == "conv":
-            mean = torch.mean(self.position_bias, dim=-1)
-            std = torch.std(self.position_bias, dim=-1)
+            mean = torch.mean(self.position_bias, dim=(-1, -2))[:,:,None,None]
+            std = torch.std(self.position_bias, dim=(-1, -2))[:,:,None,None]
+            # print(mean.size(), std.size())
             weight = self.repara_gamma * (self.position_bias - mean) / std + self.repara_beta
-
+            
             context_layer = AftConv(query_layer, key_layer, value_layer, weight)
-        # print(context_layer.isnan().any())
+        if context_layer.isnan().any():
+            print("In Attention")
+            sys.exit(1)
         
         # Take the dot product between "query" and "key" to get the raw attention scores.
         if self.mode == "conv":
