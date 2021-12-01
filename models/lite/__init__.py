@@ -37,11 +37,6 @@ def is_tokenizers_available():
 
 
 
-from .configuration_lite import LiteConfig
-
-if is_tokenizers_available():
-    from .tokenization_lite_fast import LiteTokenizerFast
-
 if is_torch_available():
     from .modeling_lite import (
         LiteForMaskedLM,

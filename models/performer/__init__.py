@@ -36,12 +36,6 @@ def is_tokenizers_available():
     
 
 
-
-from .configuration_performer import PerformerConfig
-
-if is_tokenizers_available():
-    from .tokenization_performer_fast import PerformerTokenizerFast
-
 if is_torch_available():
     from .modeling_performer import (
         PerformerForMaskedLM,

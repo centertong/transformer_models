@@ -20,7 +20,7 @@ from transformers.modeling_utils import (
 from transformers import logging
 
 from .embeddings import Embeddings
-from ..layers.attentions import gaussian_orthogonal_random_matrix, FAVORPlusAttention
+from .attentions import gaussian_orthogonal_random_matrix, FAVORPlusAttention
 
 logger = logging.get_logger(__name__)
 

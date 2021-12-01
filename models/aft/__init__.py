@@ -36,12 +36,6 @@ def is_tokenizers_available():
     
 
 
-
-from .configuration_aft import AftConfig
-
-if is_tokenizers_available():
-    from .tokenization_aft_fast import AftTokenizerFast
-
 if is_torch_available():
     from .modeling_aft import (
         AftForMaskedLM,
