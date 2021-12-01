@@ -18,9 +18,8 @@ from transformers.modeling_utils import (
     PreTrainedModel,
 )
 from transformers import logging
-from .configuration_performer import PerformerConfig
 
-from ..layers.embeddings import Embeddings
+from .embeddings import Embeddings
 from ..layers.attentions import gaussian_orthogonal_random_matrix, FAVORPlusAttention
 
 logger = logging.get_logger(__name__)
@@ -364,7 +363,7 @@ class PerformerPreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = PerformerConfig
+    # config_class = PerformerConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]

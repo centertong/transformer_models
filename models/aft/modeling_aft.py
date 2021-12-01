@@ -21,10 +21,9 @@ from transformers.modeling_utils import (
     PreTrainedModel,
 )
 from transformers import logging
-from .configuration_aft import AftConfig
 
-from ..layers.embeddings import Embeddings
-from ..layers.attentions import AftBase, AftSimple, AftConv
+from .embeddings import Embeddings
+from .attentions import AftBase, AftSimple, AftConv
 
 logger = logging.get_logger(__name__)
 
@@ -402,7 +401,6 @@ class AftPreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = AftConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]

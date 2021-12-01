@@ -42,9 +42,8 @@ from transformers.modeling_utils import (
     apply_chunking_to_forward,
 )
 from transformers import logging
-from .configuration_bert import BertConfig
 
-from ..layers.embeddings import Embeddings
+from .embeddings import Embeddings
 
 
 logger = logging.get_logger(__name__)
@@ -394,7 +393,7 @@ class BertPreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = BertConfig
+    # config_class = BertConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]

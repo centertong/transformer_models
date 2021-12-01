@@ -19,10 +19,9 @@ from transformers.modeling_utils import (
     PreTrainedModel,
 )
 from transformers import logging
-from .configuration_rfa import RfaConfig
 
-from ..layers.embeddings import Embeddings
-from ..layers.attentions import gaussian_random_matrix, RfaAttention
+from .embeddings import Embeddings
+from .attentions import gaussian_random_matrix, RfaAttention
 
 logger = logging.get_logger(__name__)
 
@@ -368,7 +367,7 @@ class RfaPreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = RfaConfig
+    # config_class = RfaConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]

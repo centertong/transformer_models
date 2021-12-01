@@ -37,11 +37,6 @@ def is_tokenizers_available():
 
 
 
-from .configuration_bert import BertConfig
-from .tokenization_bert import BasicTokenizer, BertTokenizer, WordpieceTokenizer
-
-if is_tokenizers_available():
-    from .tokenization_bert_fast import BertTokenizerFast
 
 if is_torch_available():
     from .modeling_bert import (

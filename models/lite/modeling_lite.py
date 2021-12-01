@@ -43,10 +43,9 @@ from transformers.modeling_utils import (
     apply_chunking_to_forward,
 )
 from transformers import logging
-from .configuration_lite import LiteConfig
 
-from ..layers.embeddings import Embeddings
-from ..layers.convs import LightweightConv1d,DepthwiseConv1d
+from .embeddings import Embeddings
+from .convs import LightweightConv1d,DepthwiseConv1d
 
 logger = logging.get_logger(__name__)
 
@@ -461,7 +460,7 @@ class LitePreTrainedModel(PreTrainedModel):
     models.
     """
 
-    config_class = LiteConfig
+    # config_class = LiteConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]

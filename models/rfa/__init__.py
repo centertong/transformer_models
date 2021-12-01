@@ -36,12 +36,6 @@ def is_tokenizers_available():
     
 
 
-
-from .configuration_rfa import RfaConfig
-
-if is_tokenizers_available():
-    from .tokenization_rfa_fast import RfaTokenizerFast
-
 if is_torch_available():
     from .modeling_rfa import (
         RfaForMaskedLM,

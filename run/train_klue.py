@@ -123,7 +123,7 @@ def main():
 
     
     # optimizer = Adafactor(model.parameters(), lr= 1e-3, relative_step=False)
-    optimizer = AdamW(model.parameters(), lr= 1e-3)
+    optimizer = AdamW(model.parameters(), lr= 1e-3, weight_decay= 1e-4)
         
     trainer = KlueTrainer(args.type, model, tokenizer, optimizer,model_name=args.name, device=args.device, checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)
 
