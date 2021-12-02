@@ -132,7 +132,7 @@ class LocalAttentionLayer(nn.Module):
             )
         
         self.glu = nn.GLU()
-        self.convs = nn.ModuleList([nn.Conv1d(half_size, half_size, k, padding="same") for k in config.kernel_list])
+        self.convs = nn.ModuleList([DepthwiseConv1d(half_size, half_size, k, padding="same") for k in config.kernel_list])
         self.out = nn.Linear(half_size * len(config.kernel_list), local_size)
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.drop_prob = config.attention_probs_dropout_prob

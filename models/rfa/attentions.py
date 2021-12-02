@@ -3,11 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import sys
 from einops import repeat, rearrange
 from functools import partial
 
 def linear_attention(q, k, v):
     k_cumsum = k.sum(dim = -2)
+    
     D_inv = 1. / torch.einsum('...nd,...d->...n', q, k_cumsum.type_as(q))
     context = torch.einsum('...nd,...ne->...de', k, v)
     out = torch.einsum('...de,...nd,...n->...ne', context, q, D_inv)
@@ -27,16 +29,19 @@ def random_feature_map(data, projection_matrix, mode="arccos"):
 
     data_dash = torch.einsum('...id,...jd->...ij', F.normalize(data, p=2, dim=-1), projection)
     if mode == "arccos":
-        data_dash = F.relu(data_dash) * (data.shape[-1] ** -0.5)
+        data_dash = F.relu(data_dash) * (data.shape[-1] ** -0.5) + 1e-5
     else:
         data_dash = torch.cat([torch.sin(data_dash), torch.cos(data_dash)], dim=-1) * (data.shape[-1] ** -0.5)
     return data_dash
 
 
-
-def RfaAttention(query, key, value, projection_matrix=None, mode="arccos"):
+def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=None):
     query = random_feature_map(query, projection_matrix=projection_matrix, mode=mode)
     key = random_feature_map(key, projection_matrix=projection_matrix, mode=mode)
+    if mask is not None:
+        key.masked_fill_(~mask, 0.)
+        value.masked_fill_(~mask, 0.)
+
     out = linear_attention(query, key, value)
     return out
 

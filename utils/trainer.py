@@ -134,7 +134,7 @@ class Trainer(object):
                 global_steps += 1
 
                 if global_steps % gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5)
 
                     if self.tpu:
                         xm.optimizer_step(self.optimizer, barrier=True)  # Note: Cloud TPU-specific code!
@@ -150,10 +150,10 @@ class Trainer(object):
                         results_file.close()
                     step_loss = 0.0
                     local_steps = 0
-
-                if global_steps % ckpt_steps == 0:
-                    self.save(epoch, self.model, self.optimizer, losses, global_steps)
-                    logging.info(f'{datetime.now()} | Saved checkpoint to: {self.checkpoint_path}')
+                if self.checkpoint_path:
+                    if global_steps % ckpt_steps == 0:
+                        self.save(epoch, self.model, self.optimizer, losses, global_steps)
+                        logging.info(f'{datetime.now()} | Saved checkpoint to: {self.checkpoint_path}')
 
             # Evaluate every epoch
             self.evaluate(self.eval_loader)

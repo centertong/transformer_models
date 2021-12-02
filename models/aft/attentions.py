@@ -37,13 +37,12 @@ def AftConv(query, key, value, weight):
 
     _, h, *_ = query.size()
 
-    query = F.normalize(query, p=2, dim=-1)
-    key = F.normalize(key, p=2, dim=-1)
-    value = F.normalize(value, p=2, dim=-1)
-    
     query = query.sigmoid()
-    key_exp = torch.clamp(torch.exp(key), max=10)
-    weight = torch.clamp(torch.exp(weight), max=10) - 1
+    key_exp = torch.exp(F.normalize(key, p=2, dim=-1))
+    weight = torch.exp(weight) - 1
+
+    # key_exp = torch.exp(key)
+    # weight = torch.exp(weight) - 1
 
     sum_key_exp = key_exp.sum(dim=-2) # B H C
     key_value = key_exp * value

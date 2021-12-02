@@ -25,7 +25,6 @@ from .attentions import gaussian_random_matrix, RfaAttention
 
 logger = logging.get_logger(__name__)
 
-
 class RfaAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -66,18 +65,20 @@ class RfaAttentionLayer(nn.Module):
         head_mask=None,
         output_attentions=False,
     ):
-
+        
         query_layer = self.transpose_for_scores(self.query(hidden_states))
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
 
         attention_mask_tmp = attention_mask[:, None, :, None]
         attention_mask_tmp = attention_mask_tmp.bool()
-        value_layer.masked_fill_(~attention_mask_tmp, 0.)
+        # value_layer.masked_fill_(~attention_mask_tmp, 0.)
 
-        projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size, num_head=self.num_attention_heads, device=query_layer.device)
-        projection_matrix = projection_matrix * (self.repara_w.unsqueeze(2) + 0.001)
-        context_layer = RfaAttention(query_layer, key_layer, value_layer, projection_matrix, mode=self.kernel_mode)
+        projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size,
+                                                num_head=self.num_attention_heads, device=query_layer.device)
+        projection_matrix = projection_matrix * (self.repara_w.unsqueeze(2))
+        context_layer = RfaAttention(query_layer, key_layer, value_layer, projection_matrix,
+                                    mode=self.kernel_mode, mask=attention_mask_tmp)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         
@@ -748,9 +749,9 @@ class RfaForSequenceClassification(RfaPreTrainedModel):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        for rfa_layer in self.bert.encoder.layer:
-            rw = rfa_layer.attention.self.repara_w
-            loss += ((rw ** 2).mean(dim=-1) ** 0.5).mean() * 0.01
+        # for rfa_layer in self.bert.encoder.layer:
+        #     rw = rfa_layer.attention.self.repara_w
+        #     loss += ((rw ** 2).mean(dim=-1) ** 0.5).mean() * 0.01
 
 
         return SequenceClassifierOutput(

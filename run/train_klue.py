@@ -18,7 +18,10 @@ from models import (
     PerformerForSequenceClassification,
     RfaForSequenceClassification,
     LiteForSequenceClassification,
-    AftForSequenceClassification
+    AftForSequenceClassification,
+    FastformerForSequenceClassification,
+    LunaForSequenceClassification,
+    ScatterBrainForSequenceClassification,
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -61,7 +64,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--tokenizer", type=str, required=True)
-    parser.add_argument("--save_path", type=str, required=True)
+    parser.add_argument("--save_path", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--type", type=str, choices=['sts', 'tc', 'nli'])
@@ -96,6 +99,14 @@ def getModel(config_path, num_labels):
         return LiteForSequenceClassification(config)
     if config.model_type == "aft":
         return AftForSequenceClassification(config)
+    if config.model_type == "fastformer":
+        return FastformerForSequenceClassification(config)
+    if config.model_type == "luna":
+        return LunaForSequenceClassification(config)
+    if config.model_type == "scatterbrain":
+        return ScatterBrainForSequenceClassification(config)
+
+        
     
 
 def main():
@@ -123,7 +134,7 @@ def main():
 
     
     # optimizer = Adafactor(model.parameters(), lr= 1e-3, relative_step=False)
-    optimizer = AdamW(model.parameters(), lr= 1e-3, weight_decay= 1e-4)
+    optimizer = AdamW(model.parameters(), lr= 1e-4, weight_decay= 1e-4)
         
     trainer = KlueTrainer(args.type, model, tokenizer, optimizer,model_name=args.name, device=args.device, checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)
 

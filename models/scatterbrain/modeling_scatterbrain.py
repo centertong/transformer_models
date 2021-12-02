@@ -1,9 +1,7 @@
 import math
-import sys
 
 import torch
 from torch._C import device
-import torch.functional as F
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
@@ -23,12 +21,12 @@ from transformers.modeling_utils import (
 from transformers import logging
 
 from .embeddings import Embeddings
-from .attentions import AftBase, AftSimple, AftConv
+from .attentions import gaussian_random_matrix, RowRankAttention, SparseAttention
 
 logger = logging.get_logger(__name__)
 
 
-class AftBaseAttentionLayer(nn.Module):
+class ScatterBrainAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
@@ -40,31 +38,13 @@ class AftBaseAttentionLayer(nn.Module):
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.nb_features = config.nb_features# int(4 * math.log(self.attention_head_size))
         
-        self.mode = config.attention_mode
-        if self.mode in ["base", "local"]:
-            # self.position_bias = nn.Parameter(torch.rand((config.max_position_embeddings, config.max_position_embeddings), dtype=torch.float32))
-            self.position_bias_u = nn.Parameter(torch.rand((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
-            self.position_bias_v = nn.Parameter(torch.rand((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
-        if self.mode == "conv":
-            self.position_bias = nn.Parameter(torch.rand((self.num_attention_heads, 1, config.local_size, config.local_size), dtype=torch.float32))
-            self.repara_gamma = nn.Parameter(torch.zeros((self.num_attention_heads,1, 1, 1)))
-            self.repara_beta = nn.Parameter(torch.zeros((self.num_attention_heads,1, 1, 1)))
-        self.max_length = config.max_position_embeddings
-        self.local_size = config.local_size
-
-        local_mask = torch.Tensor([
-                    [1. if math.fabs(i-j) < self.local_size else 0. for j in range(self.max_length)] 
-                    for i in range(self.max_length)
-                ])
-        self.register_buffer('local_mask', local_mask)
-
-
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
         self.out = nn.Linear(config.hidden_size, config.hidden_size)
-        
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
@@ -81,48 +61,28 @@ class AftBaseAttentionLayer(nn.Module):
         head_mask=None,
         output_attentions=False,
     ):
-        if hidden_states.isnan().any():
-            print("Before Attention")
-            sys.exit(1)
-        query_layer = self.query(hidden_states)
-        key_layer = self.key(hidden_states)
-        value_layer = self.value(hidden_states)
-        if self.mode == "conv":
-            query_layer = self.transpose_for_scores(query_layer)
-            key_layer = self.transpose_for_scores(key_layer)
-            value_layer = self.transpose_for_scores(value_layer)
 
-        attention_mask_tmp = attention_mask[:, :, None] if self.mode != "conv" else attention_mask[:, None, :, None]
-        attention_mask_tmp = attention_mask_tmp.bool()
-        value_layer.masked_fill_(~attention_mask_tmp, 0.)
+        query_layer = self.transpose_for_scores(self.query(hidden_states))
+        key_layer = self.transpose_for_scores(self.key(hidden_states))
+        value_layer = self.transpose_for_scores(self.value(hidden_states))
 
-        # B, H, L, C
-        if self.mode in ["base", "local"]:    
-            bias = self.position_bias_u @ self.position_bias_v.t()
-            if self.mode == "local":
-                bias = bias * self.local_mask
-                
-        if self.mode in ["base", "local"]:    
-            context_layer = AftBase(query_layer, key_layer, value_layer, bias)
-        elif self.mode == "simple":
-            context_layer = AftSimple(query_layer, key_layer, value_layer)
-        elif self.mode == "conv":
-            mean = torch.mean(self.position_bias, dim=(-1, -2))[:,:,None,None]
-            std = torch.std(self.position_bias, dim=(-1, -2))[:,:,None,None]
-            # print(mean.size(), std.size())
-            repara_gamma = self.repara_gamma + 1e-4
-            weight = repara_gamma * (self.position_bias - mean) / std + self.repara_beta
-            
-            context_layer = AftConv(query_layer, key_layer, value_layer, weight)
-        if context_layer.isnan().any():
-            print("In Attention")
-            sys.exit(1)
+        attention_mask_tmp = None
+        if attention_mask is not None:
+            attention_mask_tmp = attention_mask[:, None, :, None]
+            attention_mask_tmp = attention_mask_tmp.bool()
         
+        projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size,
+                                                num_head=self.num_attention_heads, device=query_layer.device)
+        
+        row_context, row_q, row_k = RowRankAttention(query_layer, key_layer, value_layer, projection_matrix, attention_mask_tmp)
+        # sparse_context = SparseAttention(query_layer, key_layer, value_layer, row_q, row_k)
+
+        context_layer = row_context # + sparse_context
         # Take the dot product between "query" and "key" to get the raw attention scores.
-        if self.mode == "conv":
-            context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-            new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
-            context_layer = context_layer.view(*new_context_layer_shape)
+        
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
 
         context_layer = self.out(context_layer)
         context_layer = self.dropout(context_layer)
@@ -156,7 +116,7 @@ class ReZeroConnectionLayer(nn.Module):
 class AttentionModule(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.self = AftBaseAttentionLayer(config)
+        self.self = ScatterBrainAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
         
     def forward(
@@ -208,7 +168,7 @@ class FeedForwardModule(nn.Module):
         return hidden_states
 
 
-class AftLayer(nn.Module):
+class ScatterBrainLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
@@ -242,11 +202,11 @@ class AftLayer(nn.Module):
         return outputs
 
 
-class AftEncoder(nn.Module):
+class ScatterBrainEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([AftLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([ScatterBrainLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -336,7 +296,7 @@ class AftEncoder(nn.Module):
         )
 
 
-class AftPooler(nn.Module):
+class ScatterBrainPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -351,7 +311,7 @@ class AftPooler(nn.Module):
         return pooled_output
 
 
-class AftPredictionHeadTransform(nn.Module):
+class ScatterBrainPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -368,10 +328,10 @@ class AftPredictionHeadTransform(nn.Module):
         return hidden_states
 
 
-class AftLMPredictionHead(nn.Module):
+class ScatterBrainLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.transform = AftPredictionHeadTransform(config)
+        self.transform = ScatterBrainPredictionHeadTransform(config)
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
@@ -388,10 +348,10 @@ class AftLMPredictionHead(nn.Module):
         return hidden_states
 
 
-class AftOnlyMLMHead(nn.Module):
+class ScatterBrainOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.predictions = AftLMPredictionHead(config)
+        self.predictions = ScatterBrainLMPredictionHead(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
@@ -400,12 +360,13 @@ class AftOnlyMLMHead(nn.Module):
 
 
 
-class AftPreTrainedModel(PreTrainedModel):
+class ScatterBrainPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
+    # config_class = RfaConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -427,12 +388,12 @@ class AftPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, AftEncoder):
+        if isinstance(module, ScatterBrainEncoder):
             module.gradient_checkpointing = value
 
 
 
-class AftModel(AftPreTrainedModel):
+class ScatterBrainModel(ScatterBrainPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -451,9 +412,9 @@ class AftModel(AftPreTrainedModel):
         self.config = config
 
         self.embeddings = Embeddings(config)
-        self.encoder = AftEncoder(config)
+        self.encoder = ScatterBrainEncoder(config)
 
-        self.pooler = AftPooler(config) if add_pooling_layer else None
+        self.pooler = ScatterBrainPooler(config) if add_pooling_layer else None
 
         self.init_weights()
 
@@ -604,7 +565,7 @@ class AftModel(AftPreTrainedModel):
 
 
 
-class AftForMaskedLM(AftPreTrainedModel):
+class ScatterBrainForMaskedLM(ScatterBrainPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
     _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
@@ -618,8 +579,8 @@ class AftForMaskedLM(AftPreTrainedModel):
                 "bi-directional self-attention."
             )
 
-        self.bert = AftModel(config, add_pooling_layer=False)
-        self.cls = AftOnlyMLMHead(config)
+        self.bert = ScatterBrainModel(config, add_pooling_layer=False)
+        self.cls = ScatterBrainOnlyMLMHead(config)
 
         self.init_weights()
 
@@ -706,13 +667,13 @@ class AftForMaskedLM(AftPreTrainedModel):
 
 
 
-class AftForSequenceClassification(AftPreTrainedModel):
+class ScatterBrainForSequenceClassification(ScatterBrainPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = AftModel(config)
+        self.bert = ScatterBrainModel(config)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )
@@ -785,8 +746,6 @@ class AftForSequenceClassification(AftPreTrainedModel):
         if not return_dict:
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
-
-        
 
         return SequenceClassifierOutput(
             loss=loss,

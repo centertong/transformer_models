@@ -22,3 +22,6 @@ from .performer import *
 from .rfa import *
 from .lite import *
 from .aft import *
+from .fastformer import *
+from .luna import *
+from .scatterbrain import *
