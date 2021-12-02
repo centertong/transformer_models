@@ -1,14 +1,16 @@
 # Transformers Test
 Linear Complexity Transformers Test using KLUE dataset
 
-# Models
+## Models
 * BERT (From huggingface transformers library)
 * Performer (From https://github.com/lucidrains/performer-pytorch)
-* RFA (Random Feature Attention)
-* Lite Transformer [Modifying]
-* Attention Free Transformer [Modifying]
+* RFA (Random Feature Attention) [Only 'arccos' mode]
+* Lite Transformer
+* Attention Free Transformer
+* Luna: Linear Unified Nested Attention
+* ScatterBrain [work in progress`]
 
-# Reference
+## Reference
 1. hugginface transformers
 2. hugginface tokenizers
 3. performer-pytorch
