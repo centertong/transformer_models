@@ -8,6 +8,8 @@
     "hidden_dropout_prob": 0.1,
     "hidden_size": 768,
     "nb_features": 32,
+    "n_buckets": 16,
+    "n_heads": 1,
     "kernel_method": "arccos",
     "initializer_range": 0.02,
     "intermediate_size": 3072,

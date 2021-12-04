@@ -21,7 +21,7 @@ from transformers.modeling_utils import (
 from transformers import logging
 
 from .embeddings import Embeddings
-from .attentions import gaussian_random_matrix, RowRankAttention, SparseAttention
+from .attentions import ScatterBrainAttention
 
 logger = logging.get_logger(__name__)
 
@@ -40,6 +40,8 @@ class ScatterBrainAttentionLayer(nn.Module):
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
         self.nb_features = config.nb_features# int(4 * math.log(self.attention_head_size))
+        self.n_buckets = config.n_buckets
+        self.n_heads = config.n_heads
         
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
@@ -66,18 +68,8 @@ class ScatterBrainAttentionLayer(nn.Module):
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
 
-        attention_mask_tmp = None
-        if attention_mask is not None:
-            attention_mask_tmp = attention_mask[:, None, :, None]
-            attention_mask_tmp = attention_mask_tmp.bool()
-        
-        projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size,
-                                                num_head=self.num_attention_heads, device=query_layer.device)
-        
-        row_context, row_q, row_k = RowRankAttention(query_layer, key_layer, value_layer, projection_matrix, attention_mask_tmp)
-        # sparse_context = SparseAttention(query_layer, key_layer, value_layer, row_q, row_k)
-
-        context_layer = row_context # + sparse_context
+        context_layer = ScatterBrainAttention(query_layer, key_layer, value_layer, self.nb_features,
+                                            self.n_buckets, self.n_heads, attention_mask)
         # Take the dot product between "query" and "key" to get the raw attention scores.
         
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
