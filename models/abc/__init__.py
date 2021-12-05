@@ -16,13 +16,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
 
-from .bert import *
-from .performer import *
-from .rfa import *
-from .lite import *
-from .aft import *
-from .fastformer import *
-from .luna import *
-from .scatterbrain import *
-from .abc import *
+from transformers.file_utils import is_torch_available #_LazyModule, is_tokenizers_available, is_torch_available
+from transformers import logging
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+try:
+    import tokenizers
+    _tokenizers_available = True  # pylint: disable=invalid-name
+    logger.info("Tokenizers version {} available.".format(tokenizers.__version__))
+except ImportError:
+    _tokenizers_available = False  # pylint: disable=invalid-name
+
+
+def is_tokenizers_available():
+    return _tokenizers_available
+    
+
+
+
+
+if is_torch_available():
+    from .modeling_abc import (
+        AbcForMaskedLM,
+        AbcLayer,
+        AbcModel,
+        AbcPreTrainedModel,
+        AbcForSequenceClassification,
+    )

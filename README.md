@@ -8,8 +8,9 @@ Linear Complexity Transformers Test using KLUE dataset
 * Lite Transformer
 * Attention Free Transformer
 * Luna: Linear Unified Nested Attention
-* Fastformer [work in progress]
-* ScatterBrain [work in progress]
+* Fastformer
+* ScatterBrain 
+* Scaling Transformers [work in progress]
 
 ---
 
@@ -25,6 +26,7 @@ Linear Complexity Transformers Test using KLUE dataset
 9. [Luna: Linear Unified Nested Attention][9]
 10. [Fastformer: Additive Attention Can Be All You Need][10]
 11. [Scatterbrain: Unifying Sparse and Low-rank Attention Approximation][11]
+12. [Sparse is Enough in Scaling Transformers][12]
 
 [1]: https://github.com/huggingface/transformers
 [2]: https://github.com/huggingface/tokenizers
@@ -37,3 +39,4 @@ Linear Complexity Transformers Test using KLUE dataset
 [9]: https://arxiv.org/abs/2106.01540
 [10]: https://arxiv.org/abs/2108.09084
 [11]: https://arxiv.org/abs/2110.15343
+[12]: https://arxiv.org/abs/2111.12763

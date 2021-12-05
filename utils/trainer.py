@@ -212,11 +212,12 @@ class Trainer(object):
         pass
     
     def save(self, epoch, model, optimizer, losses, train_step):
-        torch.save({
-            'epoch': epoch,  # 현재 학습 epoch
-            'model_state_dict': model.state_dict(),  # 모델 저장
-            'optimizer_state_dict': optimizer.state_dict(),  # 옵티마이저 저장
-            'losses': losses,  # Loss 저장
-            'train_step': train_step,  # 현재 진행한 학습
-        }, f'{self.checkpoint_path}/{self.model_name}.pth')
+        if self.checkpoint_path:
+            torch.save({
+                'epoch': epoch,  # 현재 학습 epoch
+                'model_state_dict': model.state_dict(),  # 모델 저장
+                'optimizer_state_dict': optimizer.state_dict(),  # 옵티마이저 저장
+                'losses': losses,  # Loss 저장
+                'train_step': train_step,  # 현재 진행한 학습
+            }, f'{self.checkpoint_path}/{self.model_name}.pth')
 

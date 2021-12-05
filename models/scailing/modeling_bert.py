@@ -1,15 +1,35 @@
+# coding=utf-8
+# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
+# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""PyTorch BERT model. """
+
+
 import math
-import sys
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import torch
-from torch._C import device
-import torch.functional as F
 import torch.utils.checkpoint
+from packaging import version
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers.activations import ACT2FN
-
+from transformers.file_utils import (
+    ModelOutput,
+)
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     BaseModelOutputWithPoolingAndCrossAttentions,
@@ -19,15 +39,17 @@ from transformers.modeling_outputs import (
 
 from transformers.modeling_utils import (
     PreTrainedModel,
+    apply_chunking_to_forward,
 )
 from transformers import logging
 
 from .embeddings import Embeddings
 
+
 logger = logging.get_logger(__name__)
 
 
-class FastformerAttentionLayer(nn.Module):
+class SelfAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
@@ -39,18 +61,11 @@ class FastformerAttentionLayer(nn.Module):
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
-        
-        
-        self.max_length = config.max_position_embeddings
-        
+
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
         self.out = nn.Linear(config.hidden_size, config.hidden_size)
-
-        self.wq = nn.Parameter(torch.rand(self.num_attention_heads, self.attention_head_size))
-        self.wk = nn.Parameter(torch.rand(self.num_attention_heads, self.attention_head_size))
-        
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
@@ -67,65 +82,42 @@ class FastformerAttentionLayer(nn.Module):
         head_mask=None,
         output_attentions=False,
     ):
-        if hidden_states.isnan().any():
-            print("Before Attention")
-            sys.exit(1)
-        query = self.query(hidden_states)
-        key = self.key(hidden_states)
-        value = self.value(hidden_states)
-        
-        
-        query_layer = self.transpose_for_scores(query)
-        key_layer = self.transpose_for_scores(key)
-        value_layer = self.transpose_for_scores(value)
-        
-        # if attention_mask is not None:
-        #     attention_mask_tmp = attention_mask[:, None, :, None]
-        #     attention_mask_tmp = attention_mask_tmp.bool()
 
-        #     query_layer.masked_fill_(~attention_mask_tmp, 0.)
-        #     key_layer.masked_fill_(~attention_mask_tmp, 0.)
-        #     value_layer.masked_fill_(~attention_mask_tmp, 0.)
+        query_layer = self.transpose_for_scores(self.query(hidden_states))
+        key_layer = self.transpose_for_scores(self.key(hidden_states))
+        value_layer = self.transpose_for_scores(self.value(hidden_states))
 
+        # Take the dot product between "query" and "key" to get the raw attention scores.
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
 
-        # B, H, L, C
-        query_weight = torch.einsum('bhlc, hc->bhl', query_layer, self.wq) * (self.attention_head_size ** -0.5)
-
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         if attention_mask is not None:
-            attention_mask_tmp = attention_mask[:, None, :]
-            attention_mask_tmp = attention_mask_tmp.bool()
-            query_weight = query_weight + ~attention_mask_tmp * -1e15
+            # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+            attention_scores = attention_scores + attention_mask
 
-        query_weight = torch.exp(query_weight - torch.amax(query_weight, dim=-1, keepdim=True))
-        alpha = query_weight / query_weight.sum(-1, keepdim=True)
-        attention_query = torch.einsum('bhl, bhlc -> bhc', alpha, query_layer)
-        
-        query_key = torch.einsum('bhc, bhlc->bhlc', attention_query, key_layer)
+        # Normalize the attention scores to probabilities.
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
-        key_weight = torch.einsum('bhlc, hc->bhl', query_key, self.wk) * (self.attention_head_size ** -0.5)
+        # This is actually dropping out entire tokens to attend to, which might
+        # seem a bit unusual, but is taken from the original Transformer paper.
+        attention_probs = self.dropout(attention_probs)
 
-        if attention_mask is not None:
-            key_weight = key_weight + ~attention_mask_tmp * -1e15
+        # Mask heads if we want to
+        if head_mask is not None:
+            attention_probs = attention_probs * head_mask
 
-        key_weight = torch.exp(key_weight - torch.amax(key_weight, dim=-1, keepdim=True))
-        beta = key_weight / key_weight.sum(-1, keepdim=True)
-        attention_key = torch.einsum('bhl, bhlc -> bhc', beta, query_key)
+        context_layer = torch.matmul(attention_probs, value_layer)
 
-        key_value = torch.einsum('bhc, bhlc->bhlc', attention_key, value_layer)
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
 
-        key_value = key_value.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = key_value.size()[:-2] + (self.all_head_size,)
-        key_value = key_value.view(*new_context_layer_shape)
+        context_layer = self.out(context_layer)
+        context_layer = self.dropout(context_layer)
 
-
-        key_value = self.out(key_value)
-        key_value = self.dropout(key_value)
-
-        context_layer = query + key_value        
-        outputs = (context_layer,)
+        outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
 
         return outputs
-
 
 
 class SkipConnectionLayer(nn.Module):
@@ -151,7 +143,7 @@ class ReZeroConnectionLayer(nn.Module):
 class AttentionModule(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.self = FastformerAttentionLayer(config)
+        self.self = SelfAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
         
     def forward(
@@ -203,7 +195,7 @@ class FeedForwardModule(nn.Module):
         return hidden_states
 
 
-class FastformerLayer(nn.Module):
+class BertLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
@@ -237,13 +229,11 @@ class FastformerLayer(nn.Module):
         return outputs
 
 
-class FastformerEncoder(nn.Module):
+class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        # self.layer = nn.ModuleList([FastformerLayer(config) for _ in range(config.num_hidden_layers)])
-        self.layer = nn.ModuleList([FastformerLayer(config) for _ in range(config.num_hidden_layers)])
-        
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -333,7 +323,7 @@ class FastformerEncoder(nn.Module):
         )
 
 
-class FastformerPooler(nn.Module):
+class BertPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -348,7 +338,7 @@ class FastformerPooler(nn.Module):
         return pooled_output
 
 
-class FastformerPredictionHeadTransform(nn.Module):
+class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -365,10 +355,10 @@ class FastformerPredictionHeadTransform(nn.Module):
         return hidden_states
 
 
-class FastformerLMPredictionHead(nn.Module):
+class BertLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.transform = FastformerPredictionHeadTransform(config)
+        self.transform = BertPredictionHeadTransform(config)
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
@@ -385,10 +375,10 @@ class FastformerLMPredictionHead(nn.Module):
         return hidden_states
 
 
-class FastformerOnlyMLMHead(nn.Module):
+class BertOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.predictions = FastformerLMPredictionHead(config)
+        self.predictions = BertLMPredictionHead(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
@@ -397,12 +387,13 @@ class FastformerOnlyMLMHead(nn.Module):
 
 
 
-class FastformerPreTrainedModel(PreTrainedModel):
+class BertPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
+    # config_class = BertConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -424,12 +415,12 @@ class FastformerPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, FastformerEncoder):
+        if isinstance(module, BertEncoder):
             module.gradient_checkpointing = value
 
 
 
-class FastformerModel(FastformerPreTrainedModel):
+class BertModel(BertPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -448,9 +439,9 @@ class FastformerModel(FastformerPreTrainedModel):
         self.config = config
 
         self.embeddings = Embeddings(config)
-        self.encoder = FastformerEncoder(config)
+        self.encoder = BertEncoder(config)
 
-        self.pooler = FastformerPooler(config) if add_pooling_layer else None
+        self.pooler = BertPooler(config) if add_pooling_layer else None
 
         self.init_weights()
 
@@ -543,9 +534,7 @@ class FastformerModel(FastformerPreTrainedModel):
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        
-        #extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
-        extended_attention_mask: torch.Tensor = attention_mask
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -601,7 +590,7 @@ class FastformerModel(FastformerPreTrainedModel):
 
 
 
-class FastformerForMaskedLM(FastformerPreTrainedModel):
+class BertForMaskedLM(BertPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
     _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
@@ -615,8 +604,8 @@ class FastformerForMaskedLM(FastformerPreTrainedModel):
                 "bi-directional self-attention."
             )
 
-        self.bert = FastformerModel(config, add_pooling_layer=False)
-        self.cls = FastformerOnlyMLMHead(config)
+        self.bert = BertModel(config, add_pooling_layer=False)
+        self.cls = BertOnlyMLMHead(config)
 
         self.init_weights()
 
@@ -703,13 +692,13 @@ class FastformerForMaskedLM(FastformerPreTrainedModel):
 
 
 
-class FastformerForSequenceClassification(FastformerPreTrainedModel):
+class BertForSequenceClassification(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = FastformerModel(config)
+        self.bert = BertModel(config)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )
@@ -782,8 +771,6 @@ class FastformerForSequenceClassification(FastformerPreTrainedModel):
         if not return_dict:
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
-
-        
 
         return SequenceClassifierOutput(
             loss=loss,
