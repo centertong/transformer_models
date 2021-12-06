@@ -35,14 +35,11 @@ def is_tokenizers_available():
     return _tokenizers_available
     
 
-
-
-
 if is_torch_available():
-    from .modeling_bert import (
-        BertForMaskedLM,
-        BertLayer,
-        BertModel,
-        BertPreTrainedModel,
-        BertForSequenceClassification,
+    from .modeling_scaling import (
+        ScalingForMaskedLM,
+        ScalingLayer,
+        ScalingModel,
+        ScalingPreTrainedModel,
+        ScalingForSequenceClassification,
     )

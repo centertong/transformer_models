@@ -53,6 +53,8 @@ class FastformerAttentionLayer(nn.Module):
         
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
         
     def transpose_for_scores(self, x):
@@ -122,6 +124,7 @@ class FastformerAttentionLayer(nn.Module):
         key_value = self.dropout(key_value)
 
         context_layer = query + key_value        
+        context_layer = self.LayerNorm(context_layer)
         outputs = (context_layer,)
 
         return outputs
@@ -241,8 +244,8 @@ class FastformerEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        # self.layer = nn.ModuleList([FastformerLayer(config) for _ in range(config.num_hidden_layers)])
         self.layer = nn.ModuleList([FastformerLayer(config) for _ in range(config.num_hidden_layers)])
+        # self.layer = nn.ModuleList([FastformerAttentionLayer(config) for _ in range(config.num_hidden_layers)])
         
         self.gradient_checkpointing = False
 

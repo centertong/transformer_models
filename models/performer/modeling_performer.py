@@ -38,7 +38,7 @@ class FastAttentionLayer(nn.Module):
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.nb_features = int(self.attention_head_size * math.log(self.attention_head_size))
+        self.nb_features = config.nb_features
         projection_matrix = gaussian_orthogonal_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size, scaling=0)
         self.register_buffer('projection_matrix', projection_matrix)
 

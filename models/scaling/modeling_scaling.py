@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
+import torch.nn.functional as F
+from torch.nn.parameter import Parameter
 import torch.utils.checkpoint
 from packaging import version
 from torch import nn
@@ -44,37 +46,43 @@ from transformers.modeling_utils import (
 from transformers import logging
 
 from .embeddings import Embeddings
+from .attentions import MultiHeadAttention
 
 
 logger = logging.get_logger(__name__)
 
+class MultiplicativeLayer(nn.Module):
+    def __init__(self, hidden_size, sparsity_level):
+        super().__init__()
+        self.d = Parameter(torch.rand(sparsity_level, hidden_size))
+        self.e = Parameter(torch.rand(hidden_size, hidden_size // sparsity_level))
 
-class SelfAttentionLayer(nn.Module):
+    def forward(self, x):
+        x = torch.einsum('bld, sd->blsd', x, self.d)
+        x = torch.einsum('blds, dm->blsm', x, self.e)
+        return x
+
+
+class MultiplicativeConvAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
+        if config.hidden_size % config.attn_sparsity != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
                 f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
+                f"heads ({config.attn_sparsity})"
             )
 
-        self.num_attention_heads = config.num_attention_heads
-        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
-
-        self.query = nn.Linear(config.hidden_size, self.all_head_size)
-        self.key = nn.Linear(config.hidden_size, self.all_head_size)
-        self.value = nn.Linear(config.hidden_size, self.all_head_size)
-        self.out = nn.Linear(config.hidden_size, config.hidden_size)
-
+        self.mult = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
+        
+        conv_dim =  config.hidden_size // config.attn_sparsity
+        self.query_conv = nn.Conv2d(conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
+        self.key_conv = nn.Conv2d(conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
+        self.value_conv = nn.Conv2d(conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
+        
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
-        
-    def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = x.view(*new_x_shape)
-        return x.permute(0, 2, 1, 3)
 
+        
     def forward(
         self,
         hidden_states,
@@ -83,37 +91,64 @@ class SelfAttentionLayer(nn.Module):
         output_attentions=False,
     ):
 
-        query_layer = self.transpose_for_scores(self.query(hidden_states))
-        key_layer = self.transpose_for_scores(self.key(hidden_states))
-        value_layer = self.transpose_for_scores(self.value(hidden_states))
+        hidden_states = self.mult(hidden_states)
+        
+        query_layer = self.query_conv(hidden_states).permute(0, 2, 1, 3)
+        key_layer = self.key_conv(hidden_states).permute(0, 2, 1, 3)
+        value_layer = self.value_conv(hidden_states).permute(0, 2, 1, 3)
 
-        # Take the dot product between "query" and "key" to get the raw attention scores.
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        if attention_mask is not None:
-            # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
-            attention_scores = attention_scores + attention_mask
-
-        # Normalize the attention scores to probabilities.
-        attention_probs = nn.Softmax(dim=-1)(attention_scores)
-
-        # This is actually dropping out entire tokens to attend to, which might
-        # seem a bit unusual, but is taken from the original Transformer paper.
-        attention_probs = self.dropout(attention_probs)
-
-        # Mask heads if we want to
-        if head_mask is not None:
-            attention_probs = attention_probs * head_mask
-
-        context_layer = torch.matmul(attention_probs, value_layer)
-
+        context_layer, attention_probs = MultiHeadAttention(query_layer, key_layer, value_layer, attention_mask, self.dropout, head_mask)
+    
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        new_context_layer_shape = context_layer.size()[:-2] + (-1,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+
+        outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
+
+        return outputs
+
+
+
+class MultiplicativeAttentionLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        if config.hidden_size % config.attn_sparsity != 0 and not hasattr(config, "embedding_size"):
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.attn_sparsity})"
+            )
+
+        self.query = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
+        self.key = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
+        self.value = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
+        
+        self.out = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
+
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+
+        
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        output_attentions=False,
+    ):
+
+        query_layer = self.query(hidden_states).permute(0, 2, 1, 3)
+        key_layer = self.key(hidden_states).permute(0, 2, 1, 3)
+        value_layer = self.value(hidden_states).permute(0, 2, 1, 3)
+
+        context_layer, attention_probs = MultiHeadAttention(query_layer, key_layer, value_layer, attention_mask, self.dropout, head_mask)
+    
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (-1,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
         context_layer = self.out(context_layer)
         context_layer = self.dropout(context_layer)
+        context_layer = context_layer.view(*new_context_layer_shape)
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
 
@@ -143,7 +178,10 @@ class ReZeroConnectionLayer(nn.Module):
 class AttentionModule(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.self = SelfAttentionLayer(config)
+        if config.qkv_mode == "conv":
+            self.self = MultiplicativeConvAttentionLayer(config)
+        else:
+            self.self = MultiplicativeAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
         
     def forward(
@@ -163,8 +201,30 @@ class AttentionModule(nn.Module):
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
 
+class FeedForwardController(nn.Module):
+    def __init__(self, config) -> None:
+        super().__init__()
+        assert config.hidden_size % config.sparsity_level
+        lowrank = config.hidden_size // config.sparsity_level
+        self.c1 = nn.Linear(config.hidden_size, lowrank)
+        self.c2 = nn.Linear(lowrank, config.intermediate_size)
+        self.sparsity_level = config.sparsity_level
+        self.gumbel_prob = config.gumbel_prob
 
-class FeedForwardLayer(nn.Module):
+    def forward(self, hidden_states):
+        b, l, _ = hidden_states.size()
+        hidden_states = self.c1(hidden_states)
+        hidden_states = self.c2(hidden_states)
+        hidden_states = hidden_states.reshape(b, l, -1, self.sparsity_level)
+
+
+        prob = torch.rand(1) if self.training else 1
+        hidden_states = F.gumbel_softmax(hidden_states, tau=0.1, hard= prob < self.gumbel_prob)
+
+        hidden_states = hidden_states.reshape(b, l, -1)
+        return hidden_states
+
+class ScalingFeedForwardLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
@@ -174,10 +234,17 @@ class FeedForwardLayer(nn.Module):
             self.intermediate_act_fn = config.hidden_act
         self.out = nn.Linear(config.intermediate_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.controller = FeedForwardController(config)
         
     def forward(self, hidden_states):
+        controller_states = self.controller(hidden_states)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
+
+        # hidden_states = torch.einsum('blc, blc -> blc', hidden_states, controller_states)
+        hidden_states = hidden_states * controller_states
+
         hidden_states = self.out(hidden_states)
         hidden_states = self.dropout(hidden_states)
         return hidden_states
@@ -186,7 +253,7 @@ class FeedForwardLayer(nn.Module):
 class FeedForwardModule(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.ffn = FeedForwardLayer(config)
+        self.ffn = ScalingFeedForwardLayer(config)
         self.output = ReZeroConnectionLayer(config)
         
     def forward(self, input_tensor):
@@ -195,7 +262,7 @@ class FeedForwardModule(nn.Module):
         return hidden_states
 
 
-class BertLayer(nn.Module):
+class ScalingLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
@@ -229,11 +296,11 @@ class BertLayer(nn.Module):
         return outputs
 
 
-class BertEncoder(nn.Module):
+class ScalingEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([ScalingLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -323,7 +390,7 @@ class BertEncoder(nn.Module):
         )
 
 
-class BertPooler(nn.Module):
+class ScalingPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -338,7 +405,7 @@ class BertPooler(nn.Module):
         return pooled_output
 
 
-class BertPredictionHeadTransform(nn.Module):
+class ScalingPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -355,10 +422,10 @@ class BertPredictionHeadTransform(nn.Module):
         return hidden_states
 
 
-class BertLMPredictionHead(nn.Module):
+class ScalingLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.transform = BertPredictionHeadTransform(config)
+        self.transform = ScalingPredictionHeadTransform(config)
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
@@ -375,10 +442,10 @@ class BertLMPredictionHead(nn.Module):
         return hidden_states
 
 
-class BertOnlyMLMHead(nn.Module):
+class ScalingOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.predictions = BertLMPredictionHead(config)
+        self.predictions = ScalingLMPredictionHead(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
@@ -387,7 +454,7 @@ class BertOnlyMLMHead(nn.Module):
 
 
 
-class BertPreTrainedModel(PreTrainedModel):
+class ScalingPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
@@ -415,12 +482,12 @@ class BertPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, BertEncoder):
+        if isinstance(module, ScalingEncoder):
             module.gradient_checkpointing = value
 
 
 
-class BertModel(BertPreTrainedModel):
+class ScalingModel(ScalingPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -439,9 +506,9 @@ class BertModel(BertPreTrainedModel):
         self.config = config
 
         self.embeddings = Embeddings(config)
-        self.encoder = BertEncoder(config)
+        self.encoder = ScalingEncoder(config)
 
-        self.pooler = BertPooler(config) if add_pooling_layer else None
+        self.pooler = ScalingPooler(config) if add_pooling_layer else None
 
         self.init_weights()
 
@@ -590,7 +657,7 @@ class BertModel(BertPreTrainedModel):
 
 
 
-class BertForMaskedLM(BertPreTrainedModel):
+class ScalingForMaskedLM(ScalingPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
     _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
@@ -604,8 +671,8 @@ class BertForMaskedLM(BertPreTrainedModel):
                 "bi-directional self-attention."
             )
 
-        self.bert = BertModel(config, add_pooling_layer=False)
-        self.cls = BertOnlyMLMHead(config)
+        self.bert = ScalingModel(config, add_pooling_layer=False)
+        self.cls = ScalingOnlyMLMHead(config)
 
         self.init_weights()
 
@@ -692,13 +759,13 @@ class BertForMaskedLM(BertPreTrainedModel):
 
 
 
-class BertForSequenceClassification(BertPreTrainedModel):
+class ScalingForSequenceClassification(ScalingPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = BertModel(config)
+        self.bert = ScalingModel(config)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )

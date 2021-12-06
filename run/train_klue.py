@@ -23,6 +23,7 @@ from models import (
     LunaForSequenceClassification,
     ScatterBrainForSequenceClassification,
     AbcForSequenceClassification,
+    ScalingForSequenceClassification,
 )
 
 #from models.bert import BertConfig, BertForMaskedLM

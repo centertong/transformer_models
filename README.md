@@ -2,17 +2,25 @@
 Linear Complexity Transformers Test using KLUE dataset
 
 ## Models
-* BERT (From huggingface transformers library)
-* Performer (From https://github.com/lucidrains/performer-pytorch)
-* RFA (Random Feature Attention) [Only 'arccos' mode]
-* Lite Transformer
-* Attention Free Transformer
+* bert: BERT (From huggingface transformers library)
+* performer: Performer (From https://github.com/lucidrains/performer-pytorch)
+* rfa: Random Feature Attention [Only 'arccos' mode]
+* lite: Lite Transformer
+* aft: Attention Free Transformer
 * Luna: Linear Unified Nested Attention
-* Fastformer
-* ScatterBrain 
-* Scaling Transformers [work in progress]
+* fastformer: Fastformer
+* scatterbrain: ScatterBrain 
+* abc: ATTENTION WITH BOUNDED-MEMORY CONTROL
+* scaling: Scaling Transformers [work in progress]
 
----
+## Tests
+### KLUE Dataset (STS, NLI, TC)
+### During 10 epoch training, select best performance for validation set.
+### In STS, models don't reach convergence.
+|Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)|
+|---|---|---|
+|Transformer Encoder|0.776|0.416|0.382|
+
 
 ## Reference
 1. [hugginface transformers][1]
@@ -26,7 +34,8 @@ Linear Complexity Transformers Test using KLUE dataset
 9. [Luna: Linear Unified Nested Attention][9]
 10. [Fastformer: Additive Attention Can Be All You Need][10]
 11. [Scatterbrain: Unifying Sparse and Low-rank Attention Approximation][11]
-12. [Sparse is Enough in Scaling Transformers][12]
+12. [ABC: ATTENTION WITH BOUNDED-MEMORY CONTROL][12]
+13. [Sparse is Enough in Scaling Transformers][13]
 
 [1]: https://github.com/huggingface/transformers
 [2]: https://github.com/huggingface/tokenizers
@@ -39,4 +48,5 @@ Linear Complexity Transformers Test using KLUE dataset
 [9]: https://arxiv.org/abs/2106.01540
 [10]: https://arxiv.org/abs/2108.09084
 [11]: https://arxiv.org/abs/2110.15343
-[12]: https://arxiv.org/abs/2111.12763
+[12]: https://arxiv.org/abs/2110.02488
+[13]: https://arxiv.org/abs/2111.12763

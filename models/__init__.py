@@ -26,3 +26,4 @@ from .fastformer import *
 from .luna import *
 from .scatterbrain import *
 from .abc import *
+from .scaling import *
