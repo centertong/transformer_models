@@ -18,9 +18,9 @@ Linear Complexity Transformers Test using KLUE dataset
 ### During 10 epoch training, select best performance for validation set.
 ### In STS, models don't reach convergence.
 |Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)|
-|---|---|---|
+|-----|---|---|---|
 |Transformer Encoder|0.776|0.416|0.382|
-
+|Performer|0.750| - | - |
 
 ## Reference
 1. [hugginface transformers][1]
