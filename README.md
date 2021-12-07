@@ -35,7 +35,7 @@ python run/train_klue.py --config configs/model/bert.json --name bert \
 
 ### KLUE Dataset (STS, NLI, TC)
 
-During 10 epoch training, select best performance for validation set.
+During 10 epoch training, select best performance for validation set.  
 In STS, models don't reach convergence during 10 epoch.
 
 |Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)|
