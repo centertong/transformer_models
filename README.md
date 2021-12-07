@@ -13,6 +13,18 @@ Linear Complexity Transformers Test using KLUE dataset
 * abc: ATTENTION WITH BOUNDED-MEMORY CONTROL
 * scaling: Scaling Transformers [work in progress]
 
+## Usages
+* Running klue dataset
+```bash
+python run/train_klue.py --config {model_config} --tokenizer {tokenizer_file} --type {dataset_type} \
+ --epochs {epoch_num} --batch_size {batchsize} --name {log_name}
+```
+** Example
+```batsh
+python run/train_klue.py --config configs/model/bert.json --tokenizer vocab/bert2/tokenizer.json --type tc \
+--epoch 10 --batch_size 12 --name bert
+```
+
 ## Tests
 ### KLUE Dataset (STS, NLI, TC)
 During 10 epoch training, select best performance for validation set.

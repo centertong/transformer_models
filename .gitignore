@@ -2,6 +2,7 @@ save
 data
 vocab
 logs
+test
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
