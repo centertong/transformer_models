@@ -47,7 +47,7 @@ In STS, models don't reach convergence during 10 epoch.
 |aft|0.732| - |0.374|
 |luna|0.562|0.356|0.397|
 |fastformer|0.775|0.363|0.422|
-|scatterbrain| - | - | - |
+|scatterbrain|0.447|0.377|0.345|
 |abc| - | - | - |
 |scaling| - | - | - |
 
