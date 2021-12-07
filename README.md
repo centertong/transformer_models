@@ -7,7 +7,7 @@ Linear Complexity Transformers Test using KLUE dataset
 * rfa: Random Feature Attention [Only 'arccos' mode]
 * lite: Lite Transformer
 * aft: Attention Free Transformer
-* Luna: Linear Unified Nested Attention
+* luna: Linear Unified Nested Attention
 * fastformer: Fastformer
 * scatterbrain: ScatterBrain 
 * abc: ATTENTION WITH BOUNDED-MEMORY CONTROL
@@ -15,12 +15,22 @@ Linear Complexity Transformers Test using KLUE dataset
 
 ## Tests
 ### KLUE Dataset (STS, NLI, TC)
-### During 10 epoch training, select best performance for validation set.
-### In STS, models don't reach convergence.
+During 10 epoch training, select best performance for validation set.
+In STS, models don't reach convergence during 10 epoch.
+
 |Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)|
 |-----|---|---|---|
 |Transformer Encoder|0.776|0.416|0.382|
-|Performer|0.750| - | - |
+|Performer|0.750| - |0.340|
+|rfa|0.774|0.416|0.377|
+|lite|0.769|0.388|0.402|
+|aft|0.732| - |0.374|
+|luna|0.562|0.356|0.397|
+|fastformer|0.775|0.363|0.422|
+|scatterbrain| - | - | - |
+|abc| - | - | - |
+|scaling| - | - | - |
+
 
 ## Reference
 1. [hugginface transformers][1]
