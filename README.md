@@ -1,32 +1,40 @@
 # Transformers Test
+
 Linear Complexity Transformers Test using KLUE dataset
 
 ## Models
+
 * bert: BERT (From huggingface transformers library)
-* performer: Performer (From https://github.com/lucidrains/performer-pytorch)
+* performer: Performer (From <https://github.com/lucidrains/performer-pytorch>)
 * rfa: Random Feature Attention [Only 'arccos' mode]
 * lite: Lite Transformer
 * aft: Attention Free Transformer
 * luna: Linear Unified Nested Attention
 * fastformer: Fastformer
-* scatterbrain: ScatterBrain 
+* scatterbrain: ScatterBrain
 * abc: ATTENTION WITH BOUNDED-MEMORY CONTROL
 * scaling: Scaling Transformers [work in progress]
 
 ## Usages
+
 * Running klue dataset
+
 ```bash
-python run/train_klue.py --config {model_config} --tokenizer {tokenizer_file} --type {dataset_type} \
- --epochs {epoch_num} --batch_size {batchsize} --name {log_name}
+python run/train_klue.py --config {model_config} --tokenizer {tokenizer_file} \ 
+--type {dataset_type} --epochs {epoch_num} --batch_size {batchsize} --name {log_name}
 ```
-** Example
+
+* Example
+
 ```batsh
-python run/train_klue.py --config configs/model/bert.json --tokenizer vocab/bert2/tokenizer.json --type tc \
---epoch 10 --batch_size 12 --name bert
+python run/train_klue.py --config configs/model/bert.json --name bert \
+ --tokenizer vocab/bert2/tokenizer.json --type tc --epoch 10 --batch_size 12 
 ```
 
 ## Tests
+
 ### KLUE Dataset (STS, NLI, TC)
+
 During 10 epoch training, select best performance for validation set.
 In STS, models don't reach convergence during 10 epoch.
 
@@ -43,8 +51,8 @@ In STS, models don't reach convergence during 10 epoch.
 |abc| - | - | - |
 |scaling| - | - | - |
 
-
 ## Reference
+
 1. [hugginface transformers][1]
 2. [hugginface tokenizers][2]
 3. [performer-pytorch][3]
