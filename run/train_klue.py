@@ -109,6 +109,8 @@ def getModel(config_path, num_labels):
         return ScatterBrainForSequenceClassification(config)
     if config.model_type == "abc":
         return AbcForSequenceClassification(config)
+    if config.model_type == "scaling":
+        return ScalingForSequenceClassification(config)
     
 
 def main():

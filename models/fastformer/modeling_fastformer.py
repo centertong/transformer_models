@@ -37,28 +37,32 @@ class FastformerAttentionLayer(nn.Module):
             )
 
         self.num_attention_heads = config.num_attention_heads
-        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.attention_head_size = int(
+            config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
-        
-        
+
         self.max_length = config.max_position_embeddings
-        
+
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
         self.out = nn.Linear(config.hidden_size, config.hidden_size)
 
-        self.wq = nn.Parameter(torch.rand(self.num_attention_heads, self.attention_head_size))
-        self.wk = nn.Parameter(torch.rand(self.num_attention_heads, self.attention_head_size))
-        
+        self.wq = nn.Parameter(torch.rand(
+            self.num_attention_heads, self.attention_head_size))
+        self.wk = nn.Parameter(torch.rand(
+            self.num_attention_heads, self.attention_head_size))
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
 
-        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
-        
+        self.position_embedding_type = getattr(
+            config, "position_embedding_type", "absolute")
+
     def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        new_x_shape = x.size()[
+            :-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
@@ -69,47 +73,38 @@ class FastformerAttentionLayer(nn.Module):
         head_mask=None,
         output_attentions=False,
     ):
-        if hidden_states.isnan().any():
-            print("Before Attention")
-            sys.exit(1)
         query = self.query(hidden_states)
         key = self.key(hidden_states)
         value = self.value(hidden_states)
-        
-        
+
         query_layer = self.transpose_for_scores(query)
         key_layer = self.transpose_for_scores(key)
         value_layer = self.transpose_for_scores(value)
-        
-        # if attention_mask is not None:
-        #     attention_mask_tmp = attention_mask[:, None, :, None]
-        #     attention_mask_tmp = attention_mask_tmp.bool()
-
-        #     query_layer.masked_fill_(~attention_mask_tmp, 0.)
-        #     key_layer.masked_fill_(~attention_mask_tmp, 0.)
-        #     value_layer.masked_fill_(~attention_mask_tmp, 0.)
-
 
         # B, H, L, C
-        query_weight = torch.einsum('bhlc, hc->bhl', query_layer, self.wq) * (self.attention_head_size ** -0.5)
+        query_weight = torch.einsum(
+            'bhlc, hc->bhl', query_layer, self.wq) * (self.attention_head_size ** -0.5)
 
         if attention_mask is not None:
             attention_mask_tmp = attention_mask[:, None, :]
             attention_mask_tmp = attention_mask_tmp.bool()
             query_weight = query_weight + ~attention_mask_tmp * -1e15
 
-        query_weight = torch.exp(query_weight - torch.amax(query_weight, dim=-1, keepdim=True))
+        query_weight = torch.exp(
+            query_weight - torch.amax(query_weight, dim=-1, keepdim=True))
         alpha = query_weight / query_weight.sum(-1, keepdim=True)
         attention_query = torch.einsum('bhl, bhlc -> bhc', alpha, query_layer)
-        
+
         query_key = torch.einsum('bhc, bhlc->bhlc', attention_query, key_layer)
 
-        key_weight = torch.einsum('bhlc, hc->bhl', query_key, self.wk) * (self.attention_head_size ** -0.5)
+        key_weight = torch.einsum(
+            'bhlc, hc->bhl', query_key, self.wk) * (self.attention_head_size ** -0.5)
 
         if attention_mask is not None:
             key_weight = key_weight + ~attention_mask_tmp * -1e15
 
-        key_weight = torch.exp(key_weight - torch.amax(key_weight, dim=-1, keepdim=True))
+        key_weight = torch.exp(
+            key_weight - torch.amax(key_weight, dim=-1, keepdim=True))
         beta = key_weight / key_weight.sum(-1, keepdim=True)
         attention_key = torch.einsum('bhl, bhlc -> bhc', beta, query_key)
 
@@ -119,23 +114,22 @@ class FastformerAttentionLayer(nn.Module):
         new_context_layer_shape = key_value.size()[:-2] + (self.all_head_size,)
         key_value = key_value.view(*new_context_layer_shape)
 
-
         key_value = self.out(key_value)
         key_value = self.dropout(key_value)
 
-        context_layer = query + key_value        
+        context_layer = query + key_value
         context_layer = self.LayerNorm(context_layer)
         outputs = (context_layer,)
 
         return outputs
 
 
-
 class SkipConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
@@ -144,8 +138,9 @@ class SkipConnectionLayer(nn.Module):
 class ReZeroConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.alpha = torch.nn.parameter.Parameter(torch.tensor(1e-3, dtype=torch.float32))
-        
+        self.alpha = torch.nn.parameter.Parameter(
+            torch.tensor(1e-3, dtype=torch.float32))
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.alpha * hidden_states + input_tensor
         return hidden_states
@@ -156,7 +151,7 @@ class AttentionModule(nn.Module):
         super().__init__()
         self.self = FastformerAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(
         self,
         hidden_states,
@@ -171,7 +166,8 @@ class AttentionModule(nn.Module):
             output_attentions,
         )
         attention_output = self.output(self_outputs[0], hidden_states)
-        outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
+        # add attentions if we output them
+        outputs = (attention_output,) + self_outputs[1:]
         return outputs
 
 
@@ -185,7 +181,7 @@ class FeedForwardLayer(nn.Module):
             self.intermediate_act_fn = config.hidden_act
         self.out = nn.Linear(config.intermediate_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
+
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
@@ -199,7 +195,7 @@ class FeedForwardModule(nn.Module):
         super().__init__()
         self.ffn = FeedForwardLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(self, input_tensor):
         hidden_states = self.ffn(input_tensor)
         hidden_states = self.output(hidden_states, input_tensor)
@@ -230,9 +226,9 @@ class FastformerLayer(nn.Module):
         )
         attention_output = self_attention_outputs[0]
 
-        outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
+        # add self attentions if we output attention weights
+        outputs = self_attention_outputs[1:]
 
-        
         layer_output = self.ffn(attention_output)
         outputs = (layer_output,) + outputs
 
@@ -244,9 +240,10 @@ class FastformerEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([FastformerLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([FastformerLayer(config)
+                                   for _ in range(config.num_hidden_layers)])
         # self.layer = nn.ModuleList([FastformerAttentionLayer(config) for _ in range(config.num_hidden_layers)])
-        
+
         self.gradient_checkpointing = False
 
     def forward(
@@ -310,7 +307,8 @@ class FastformerEncoder(nn.Module):
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
                 if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+                    all_cross_attentions = all_cross_attentions + \
+                        (layer_outputs[2],)
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -359,7 +357,8 @@ class FastformerPredictionHeadTransform(nn.Module):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -375,7 +374,8 @@ class FastformerLMPredictionHead(nn.Module):
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
-        self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.decoder = nn.Linear(
+            config.hidden_size, config.vocab_size, bias=False)
 
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
 
@@ -398,8 +398,6 @@ class FastformerOnlyMLMHead(nn.Module):
         return prediction_scores
 
 
-
-
 class FastformerPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
@@ -415,11 +413,13 @@ class FastformerPreTrainedModel(PreTrainedModel):
         if isinstance(module, nn.Linear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(
+                mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(
+                mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
@@ -429,7 +429,6 @@ class FastformerPreTrainedModel(PreTrainedModel):
     def _set_gradient_checkpointing(self, module, value=False):
         if isinstance(module, FastformerEncoder):
             module.gradient_checkpointing = value
-
 
 
 class FastformerModel(FastformerPreTrainedModel):
@@ -519,13 +518,15 @@ class FastformerModel(FastformerPreTrainedModel):
             use_cache = False
 
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
+            raise ValueError(
+                "You have to specify either input_ids or inputs_embeds")
 
         batch_size, seq_length = input_shape
         device = input_ids.device if input_ids is not None else inputs_embeds.device
@@ -534,19 +535,22 @@ class FastformerModel(FastformerPreTrainedModel):
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
 
         if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
+            attention_mask = torch.ones(
+                ((batch_size, seq_length + past_key_values_length)), device=device)
 
         if token_type_ids is None:
             if hasattr(self.embeddings, "token_type_ids"):
                 buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
+                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(
+                    batch_size, seq_length)
                 token_type_ids = buffered_token_type_ids_expanded
             else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+                token_type_ids = torch.zeros(
+                    input_shape, dtype=torch.long, device=device)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        
+
         #extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
         extended_attention_mask: torch.Tensor = attention_mask
 
@@ -554,10 +558,13 @@ class FastformerModel(FastformerPreTrainedModel):
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
+            encoder_hidden_shape = (
+                encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+                encoder_attention_mask = torch.ones(
+                    encoder_hidden_shape, device=device)
+            encoder_extended_attention_mask = self.invert_attention_mask(
+                encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
 
@@ -566,7 +573,8 @@ class FastformerModel(FastformerPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(
+            head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
@@ -588,7 +596,8 @@ class FastformerModel(FastformerPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+        pooled_output = self.pooler(
+            sequence_output) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -603,11 +612,11 @@ class FastformerModel(FastformerPreTrainedModel):
         )
 
 
-
 class FastformerForMaskedLM(FastformerPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
-    _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
+    _keys_to_ignore_on_load_missing = [
+        r"position_ids", r"predictions.decoder.bias"]
 
     def __init__(self, config):
         super().__init__(config)
@@ -673,7 +682,8 @@ class FastformerForMaskedLM(FastformerPreTrainedModel):
         masked_lm_loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+            masked_lm_loss = loss_fct(
+                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
@@ -694,16 +704,14 @@ class FastformerForMaskedLM(FastformerPreTrainedModel):
         if self.config.pad_token_id is None:
             raise ValueError("The PAD token should be defined for generation")
 
-        attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
+        attention_mask = torch.cat(
+            [attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
         dummy_token = torch.full(
             (effective_batch_size, 1), self.config.pad_token_id, dtype=torch.long, device=input_ids.device
         )
         input_ids = torch.cat([input_ids, dummy_token], dim=1)
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
-
-
-
 
 
 class FastformerForSequenceClassification(FastformerPreTrainedModel):
@@ -778,7 +786,8 @@ class FastformerForSequenceClassification(FastformerPreTrainedModel):
                     loss = loss_fct(logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(
+                    logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits, labels)
@@ -786,11 +795,10 @@ class FastformerForSequenceClassification(FastformerPreTrainedModel):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        
-
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+

@@ -15,6 +15,20 @@ def linear_attention(q, k, v):
     out = torch.einsum('...de,...nd,...n->...ne', context, q, D_inv)
     return out
 
+def casual_linear_attention(q, k, v):
+    kv = torch.einsum('bhlm, bhlc -> bhlmc', k, v)
+    tri_mask = torch.ones((q.size(-2), q.size(-2)))
+    tri_mask = torch.triu(tri_mask)
+
+    kv_presum = torch.einsum('bhlmc, lj -> bhjmc', kv, tri_mask)
+    k_presum = torch.einsum('bhlm, lj -> bhjm', k, tri_mask)
+
+    D_inv = 1. / torch.einsum('...nd, ...nd -> ...n', q, k_presum.type_as(q))
+
+    context = torch.einsum('bhlm, bhlmc -> bhlc', q, kv_presum)
+    out = torch.einsum('bhlc, bhl -> bhlc', context, D_inv)
+
+    return out
 
 def gaussian_random_matrix(nb_rows, nb_columns, num_head, device = "cpu"):
     block_list = [torch.randn((1, 1, nb_columns), device=device) for _ in range(num_head * nb_rows)]
@@ -35,13 +49,26 @@ def random_feature_map(data, projection_matrix, mode="arccos"):
     return data_dash
 
 
-def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=None):
+def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=None, is_casual=False):
     query = random_feature_map(query, projection_matrix=projection_matrix, mode=mode)
     key = random_feature_map(key, projection_matrix=projection_matrix, mode=mode)
     if mask is not None:
         key.masked_fill_(~mask, 0.)
-        value.masked_fill_(~mask, 0.)
-
-    out = linear_attention(query, key, value)
+    
+    if is_casual:
+        out = casual_linear_attention(query, key, value)
+    else:
+        out = linear_attention(query, key, value)
     return out
 
+def RfaGateAttention(query, key, value, gate, projection_matrix=None, mode="arccos", mask=None, is_casual=False):
+    query = random_feature_map(query, projection_matrix=projection_matrix, mode=mode)
+    key = random_feature_map(key, projection_matrix=projection_matrix, mode=mode)
+    if mask is not None:
+        key.masked_fill_(~mask, 0.)
+    
+    if is_casual:
+        out = casual_linear_attention(query, key, value)
+    else:
+        out = linear_attention(query, key, value)
+    return out

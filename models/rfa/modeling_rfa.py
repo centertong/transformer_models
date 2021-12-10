@@ -25,6 +25,74 @@ from .attentions import gaussian_random_matrix, RfaAttention
 
 logger = logging.get_logger(__name__)
 
+class RfaGateAttentionLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
+            raise ValueError(
+                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                f"heads ({config.num_attention_heads})"
+            )
+
+        self.num_attention_heads = config.num_attention_heads
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.nb_features = config.nb_features# int(4 * math.log(self.attention_head_size))
+        self.kernel_mode = config.kernel_method
+        
+        self.repara_w = nn.Parameter(torch.ones((self.num_attention_heads, self.nb_features), dtype=torch.float32))
+        
+        self.query = nn.Linear(config.hidden_size, self.all_head_size)
+        self.key = nn.Linear(config.hidden_size, self.all_head_size)
+        self.value = nn.Linear(config.hidden_size, self.all_head_size)
+        self.out = nn.Linear(config.hidden_size, config.hidden_size)
+
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.is_casual = config.is_casual
+        
+    def transpose_for_scores(self, x):
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 2, 1, 3)
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        output_attentions=False,
+    ):
+        
+        query_layer = self.transpose_for_scores(self.query(hidden_states))
+        key_layer = self.transpose_for_scores(self.key(hidden_states))
+        value_layer = self.transpose_for_scores(self.value(hidden_states))
+
+        attention_mask_tmp = attention_mask[:, None, :, None]
+        attention_mask_tmp = attention_mask_tmp.bool()
+        # value_layer.masked_fill_(~attention_mask_tmp, 0.)
+
+        projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size,
+                                                num_head=self.num_attention_heads, device=query_layer.device)
+        projection_matrix = projection_matrix * (self.repara_w.unsqueeze(2))
+        context_layer = RfaAttention(query_layer, key_layer, value_layer, projection_matrix,
+                                    mode=self.kernel_mode, mask=attention_mask_tmp, is_casual=self.is_casual)
+
+        # Take the dot product between "query" and "key" to get the raw attention scores.
+        
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+
+        context_layer = self.out(context_layer)
+        context_layer = self.dropout(context_layer)
+
+        outputs = (context_layer,)
+
+        return outputs
+
+
 class RfaAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -52,6 +120,7 @@ class RfaAttentionLayer(nn.Module):
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.is_casual = config.is_casual
         
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -78,7 +147,7 @@ class RfaAttentionLayer(nn.Module):
                                                 num_head=self.num_attention_heads, device=query_layer.device)
         projection_matrix = projection_matrix * (self.repara_w.unsqueeze(2))
         context_layer = RfaAttention(query_layer, key_layer, value_layer, projection_matrix,
-                                    mode=self.kernel_mode, mask=attention_mask_tmp)
+                                    mode=self.kernel_mode, mask=attention_mask_tmp, is_casual=self.is_casual)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         

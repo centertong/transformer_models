@@ -51,15 +51,17 @@ from .attentions import MultiHeadAttention
 
 logger = logging.get_logger(__name__)
 
+
 class MultiplicativeLayer(nn.Module):
     def __init__(self, hidden_size, sparsity_level):
         super().__init__()
         self.d = Parameter(torch.rand(sparsity_level, hidden_size))
-        self.e = Parameter(torch.rand(hidden_size, hidden_size // sparsity_level))
+        self.e = Parameter(torch.rand(
+            hidden_size, hidden_size // sparsity_level))
 
     def forward(self, x):
         x = torch.einsum('bld, sd->blsd', x, self.d)
-        x = torch.einsum('blds, dm->blsm', x, self.e)
+        x = torch.einsum('blsd, dm->blsm', x, self.e)
         return x
 
 
@@ -72,17 +74,21 @@ class MultiplicativeConvAttentionLayer(nn.Module):
                 f"heads ({config.attn_sparsity})"
             )
 
-        self.mult = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
-        
-        conv_dim =  config.hidden_size // config.attn_sparsity
-        self.query_conv = nn.Conv2d(conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
-        self.key_conv = nn.Conv2d(conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
-        self.value_conv = nn.Conv2d(conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
-        
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.mult = MultiplicativeLayer(
+            config.hidden_size, config.attn_sparsity)
 
-        
+        conv_dim = config.hidden_size // config.attn_sparsity
+        self.query_conv = nn.Conv2d(
+            conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
+        self.key_conv = nn.Conv2d(
+            conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
+        self.value_conv = nn.Conv2d(
+            conv_dim, conv_dim, (config.kernel_size, config.kernel_size), padding='same')
+
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.position_embedding_type = getattr(
+            config, "position_embedding_type", "absolute")
+
     def forward(
         self,
         hidden_states,
@@ -91,22 +97,23 @@ class MultiplicativeConvAttentionLayer(nn.Module):
         output_attentions=False,
     ):
 
-        hidden_states = self.mult(hidden_states)
-        
-        query_layer = self.query_conv(hidden_states).permute(0, 2, 1, 3)
-        key_layer = self.key_conv(hidden_states).permute(0, 2, 1, 3)
-        value_layer = self.value_conv(hidden_states).permute(0, 2, 1, 3)
+        hidden_states = self.mult(hidden_states).permute(0, 3, 1, 2)
 
-        context_layer, attention_probs = MultiHeadAttention(query_layer, key_layer, value_layer, attention_mask, self.dropout, head_mask)
-    
+        query_layer = self.query_conv(hidden_states).permute(0, 3, 2, 1)
+        key_layer = self.key_conv(hidden_states).permute(0, 3, 2, 1)
+        value_layer = self.value_conv(hidden_states).permute(0, 3, 2, 1)
+
+        context_layer, attention_probs = MultiHeadAttention(
+            query_layer, key_layer, value_layer, attention_mask, self.dropout, head_mask)
+
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (-1,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
+        outputs = (context_layer, attention_probs) if output_attentions else (
+            context_layer,)
 
         return outputs
-
 
 
 class MultiplicativeAttentionLayer(nn.Module):
@@ -118,16 +125,20 @@ class MultiplicativeAttentionLayer(nn.Module):
                 f"heads ({config.attn_sparsity})"
             )
 
-        self.query = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
-        self.key = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
-        self.value = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
-        
-        self.out = MultiplicativeLayer(config.hidden_size, config.attn_sparsity)
+        self.query = MultiplicativeLayer(
+            config.hidden_size, config.attn_sparsity)
+        self.key = MultiplicativeLayer(
+            config.hidden_size, config.attn_sparsity)
+        self.value = MultiplicativeLayer(
+            config.hidden_size, config.attn_sparsity)
+
+        self.out = MultiplicativeLayer(
+            config.hidden_size, config.attn_sparsity)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.position_embedding_type = getattr(
+            config, "position_embedding_type", "absolute")
 
-        
     def forward(
         self,
         hidden_states,
@@ -140,8 +151,9 @@ class MultiplicativeAttentionLayer(nn.Module):
         key_layer = self.key(hidden_states).permute(0, 2, 1, 3)
         value_layer = self.value(hidden_states).permute(0, 2, 1, 3)
 
-        context_layer, attention_probs = MultiHeadAttention(query_layer, key_layer, value_layer, attention_mask, self.dropout, head_mask)
-    
+        context_layer, attention_probs = MultiHeadAttention(
+            query_layer, key_layer, value_layer, attention_mask, self.dropout, head_mask)
+
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (-1,)
         context_layer = context_layer.view(*new_context_layer_shape)
@@ -150,7 +162,8 @@ class MultiplicativeAttentionLayer(nn.Module):
         context_layer = self.dropout(context_layer)
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
+        outputs = (context_layer, attention_probs) if output_attentions else (
+            context_layer,)
 
         return outputs
 
@@ -158,8 +171,9 @@ class MultiplicativeAttentionLayer(nn.Module):
 class SkipConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
@@ -168,8 +182,9 @@ class SkipConnectionLayer(nn.Module):
 class ReZeroConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.alpha = torch.nn.parameter.Parameter(torch.tensor(1e-3, dtype=torch.float32))
-        
+        self.alpha = torch.nn.parameter.Parameter(
+            torch.tensor(1e-3, dtype=torch.float32))
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.alpha * hidden_states + input_tensor
         return hidden_states
@@ -183,7 +198,7 @@ class AttentionModule(nn.Module):
         else:
             self.self = MultiplicativeAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(
         self,
         hidden_states,
@@ -198,13 +213,15 @@ class AttentionModule(nn.Module):
             output_attentions,
         )
         attention_output = self.output(self_outputs[0], hidden_states)
-        outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
+        # add attentions if we output them
+        outputs = (attention_output,) + self_outputs[1:]
         return outputs
+
 
 class FeedForwardController(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
-        assert config.hidden_size % config.sparsity_level
+        assert config.hidden_size % config.sparsity_level == 0
         lowrank = config.hidden_size // config.sparsity_level
         self.c1 = nn.Linear(config.hidden_size, lowrank)
         self.c2 = nn.Linear(lowrank, config.intermediate_size)
@@ -217,12 +234,13 @@ class FeedForwardController(nn.Module):
         hidden_states = self.c2(hidden_states)
         hidden_states = hidden_states.reshape(b, l, -1, self.sparsity_level)
 
-
-        prob = torch.rand(1) if self.training else 1
-        hidden_states = F.gumbel_softmax(hidden_states, tau=0.1, hard= prob < self.gumbel_prob)
+        prob = torch.rand(1) if self.training else -1
+        hidden_states = F.gumbel_softmax(
+            hidden_states, tau=0.1, hard=prob < self.gumbel_prob)
 
         hidden_states = hidden_states.reshape(b, l, -1)
         return hidden_states
+
 
 class ScalingFeedForwardLayer(nn.Module):
     def __init__(self, config):
@@ -236,7 +254,7 @@ class ScalingFeedForwardLayer(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         self.controller = FeedForwardController(config)
-        
+
     def forward(self, hidden_states):
         controller_states = self.controller(hidden_states)
         hidden_states = self.dense(hidden_states)
@@ -255,7 +273,7 @@ class FeedForwardModule(nn.Module):
         super().__init__()
         self.ffn = ScalingFeedForwardLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(self, input_tensor):
         hidden_states = self.ffn(input_tensor)
         hidden_states = self.output(hidden_states, input_tensor)
@@ -286,9 +304,9 @@ class ScalingLayer(nn.Module):
         )
         attention_output = self_attention_outputs[0]
 
-        outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
+        # add self attentions if we output attention weights
+        outputs = self_attention_outputs[1:]
 
-        
         layer_output = self.ffn(attention_output)
         outputs = (layer_output,) + outputs
 
@@ -300,7 +318,8 @@ class ScalingEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([ScalingLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([ScalingLayer(config)
+                                   for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -364,7 +383,8 @@ class ScalingEncoder(nn.Module):
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
                 if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+                    all_cross_attentions = all_cross_attentions + \
+                        (layer_outputs[2],)
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -413,7 +433,8 @@ class ScalingPredictionHeadTransform(nn.Module):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -429,7 +450,8 @@ class ScalingLMPredictionHead(nn.Module):
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
-        self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.decoder = nn.Linear(
+            config.hidden_size, config.vocab_size, bias=False)
 
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
 
@@ -452,8 +474,6 @@ class ScalingOnlyMLMHead(nn.Module):
         return prediction_scores
 
 
-
-
 class ScalingPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
@@ -470,11 +490,13 @@ class ScalingPreTrainedModel(PreTrainedModel):
         if isinstance(module, nn.Linear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(
+                mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(
+                mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
@@ -484,7 +506,6 @@ class ScalingPreTrainedModel(PreTrainedModel):
     def _set_gradient_checkpointing(self, module, value=False):
         if isinstance(module, ScalingEncoder):
             module.gradient_checkpointing = value
-
 
 
 class ScalingModel(ScalingPreTrainedModel):
@@ -574,13 +595,15 @@ class ScalingModel(ScalingPreTrainedModel):
             use_cache = False
 
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
+            raise ValueError(
+                "You have to specify either input_ids or inputs_embeds")
 
         batch_size, seq_length = input_shape
         device = input_ids.device if input_ids is not None else inputs_embeds.device
@@ -589,28 +612,35 @@ class ScalingModel(ScalingPreTrainedModel):
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
 
         if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
+            attention_mask = torch.ones(
+                ((batch_size, seq_length + past_key_values_length)), device=device)
 
         if token_type_ids is None:
             if hasattr(self.embeddings, "token_type_ids"):
                 buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
+                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(
+                    batch_size, seq_length)
                 token_type_ids = buffered_token_type_ids_expanded
             else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+                token_type_ids = torch.zeros(
+                    input_shape, dtype=torch.long, device=device)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(
+            attention_mask, input_shape, device)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
+            encoder_hidden_shape = (
+                encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+                encoder_attention_mask = torch.ones(
+                    encoder_hidden_shape, device=device)
+            encoder_extended_attention_mask = self.invert_attention_mask(
+                encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
 
@@ -619,7 +649,8 @@ class ScalingModel(ScalingPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(
+            head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
@@ -641,7 +672,8 @@ class ScalingModel(ScalingPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+        pooled_output = self.pooler(
+            sequence_output) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -656,11 +688,11 @@ class ScalingModel(ScalingPreTrainedModel):
         )
 
 
-
 class ScalingForMaskedLM(ScalingPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
-    _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
+    _keys_to_ignore_on_load_missing = [
+        r"position_ids", r"predictions.decoder.bias"]
 
     def __init__(self, config):
         super().__init__(config)
@@ -726,7 +758,8 @@ class ScalingForMaskedLM(ScalingPreTrainedModel):
         masked_lm_loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+            masked_lm_loss = loss_fct(
+                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
@@ -747,16 +780,14 @@ class ScalingForMaskedLM(ScalingPreTrainedModel):
         if self.config.pad_token_id is None:
             raise ValueError("The PAD token should be defined for generation")
 
-        attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
+        attention_mask = torch.cat(
+            [attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
         dummy_token = torch.full(
             (effective_batch_size, 1), self.config.pad_token_id, dtype=torch.long, device=input_ids.device
         )
         input_ids = torch.cat([input_ids, dummy_token], dim=1)
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
-
-
-
 
 
 class ScalingForSequenceClassification(ScalingPreTrainedModel):
@@ -831,7 +862,8 @@ class ScalingForSequenceClassification(ScalingPreTrainedModel):
                     loss = loss_fct(logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(
+                    logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits, labels)

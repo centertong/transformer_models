@@ -49,6 +49,7 @@ class FastAttentionLayer(nn.Module):
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.is_casual = config.is_casual
         
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -67,13 +68,10 @@ class FastAttentionLayer(nn.Module):
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
 
-        attention_mask_tmp = attention_mask[:, None, :, None]
-        attention_mask_tmp = attention_mask_tmp.bool()
-        value_layer.masked_fill_(~attention_mask_tmp, 0.)
-
         projection_matrix = gaussian_orthogonal_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size, scaling=0)
         
-        context_layer = FAVORPlusAttention(query_layer, key_layer, value_layer, projection_matrix, mode="softmax")
+        context_layer = FAVORPlusAttention(query_layer, key_layer, value_layer, projection_matrix, attention_mask,
+                                    mode="softmax", is_casual=self.is_casual)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         
