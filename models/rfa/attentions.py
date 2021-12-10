@@ -61,14 +61,25 @@ def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=
         out = linear_attention(query, key, value)
     return out
 
-def RfaGateAttention(query, key, value, gate, projection_matrix=None, mode="arccos", mask=None, is_casual=False):
-    query = random_feature_map(query, projection_matrix=projection_matrix, mode=mode)
-    key = random_feature_map(key, projection_matrix=projection_matrix, mode=mode)
-    if mask is not None:
-        key.masked_fill_(~mask, 0.)
+
+def makeGateFeature(gate):
+    # gate : b, l
+    *_, l = gate.size()
+
+    o_gate = 1 - gate
+    ones = torch.ones((l,l))
+    ones = torch.triu(ones, diagonal=1)
+    o_gate = torch.einsum('bl, lj -> blj', o_gate,ones)
     
-    if is_casual:
-        out = casual_linear_attention(query, key, value)
-    else:
-        out = linear_attention(query, key, value)
-    return out
+    ones = torch.ones(l)
+    ones = torch.diag(ones)
+    gate = torch.einsum('bl, lj -> blj', gate, ones)
+    gate = gate + o_gate
+
+    gate = torch.log(gate)
+    ones = torch.ones(l)
+    gate = torch.einsum('blj, l->bj', gate, ones)
+
+    gate = torch.exp(gate)
+    return gate
+
