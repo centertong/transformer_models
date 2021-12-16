@@ -74,6 +74,7 @@ class AbcAttentionLayer(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
+        self.is_casual = config.is_casual
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, -1)
@@ -96,15 +97,17 @@ class AbcAttentionLayer(nn.Module):
             self.value(hidden_states))  # B H L C
 
         alpha = self.transpose_for_scores(self.w(hidden_states))  # B H L M
-        alpha = torch.exp(alpha - torch.amax(alpha, dim=-2, keepdim=True))
-        alpha_inv = 1 / alpha.sum(dim=-2).unsqueeze(-2)
-        alpha = alpha * alpha_inv
 
         if attention_mask is not None:
             mask_tmp = attention_mask[:, None, :, None]
             mask_tmp = mask_tmp.bool()
             key_layer.masked_fill_(~mask_tmp, 0.)
             value_layer.masked_fill_(~mask_tmp, 0.)
+            alpha.masked_fill_(~mask_tmp, -1e10)
+
+        alpha = torch.exp(alpha - torch.amax(alpha, dim=-2, keepdim=True))
+        alpha_inv = 1 / alpha.sum(dim=-2).unsqueeze(-2)
+        alpha = alpha * alpha_inv
 
         key_layer = torch.einsum('bhlm, bhlc->bhmc', alpha, key_layer)
         value_layer = torch.einsum('bhlm, bhlc->bhmc', alpha, value_layer)
@@ -790,4 +793,3 @@ class AbcForSequenceClassification(AbcPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-

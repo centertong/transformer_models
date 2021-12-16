@@ -55,7 +55,7 @@ class Trainer(object):
 
     def build_dataloaders(self, train_dataset, eval_dataset=None, train_shuffle=True, eval_shuffle=False, train_test_split=0.1):
         if eval_dataset is None:
-            dataset_len = len(self.dataset)
+            dataset_len = len(train_dataset)
             eval_len = int(dataset_len * train_test_split)
             train_len = dataset_len - eval_len
             train_dataset, eval_dataset = random_split(train_dataset, (train_len, eval_len))

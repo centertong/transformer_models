@@ -20,6 +20,6 @@
 	"type_vocab_size": 2,
 	"use_cache": true,
 	"vocab_size": 32000,
-	"is_casual": false,
+	"is_casual": true,
 	"classifier_dropout": null
 }

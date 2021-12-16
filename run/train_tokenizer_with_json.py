@@ -91,11 +91,15 @@ def main():
     config = load_config(args.config_file)
 
     tokenizer = Tokenizer(get_instance(config.get("model"), "models"))
-
-    tokenizer.normalizer = get_sequence(config.get("normalizer"), "normalizers")
-    tokenizer.pre_tokenizer  = get_sequence(config.get("pre_tokenizer"), "pre_tokenizers")
-    tokenizer.post_processor  = get_instance(config.get("post_processor"), "processors")
-    tokenizer.decoder = get_instance(config.get("decoder"), "decoders")
+    
+    if config.get("normalizer") is not None:
+        tokenizer.normalizer = get_sequence(config.get("normalizer"), "normalizers")
+    if config.get("pre_tokenizer") is not None:
+        tokenizer.pre_tokenizer  = get_sequence(config.get("pre_tokenizer"), "pre_tokenizers")
+    if config.get("post_processor") is not None:
+        tokenizer.post_processor  = get_instance(config.get("post_processor"), "processors")
+    if config.get("decoder") is not None:
+        tokenizer.decoder = get_instance(config.get("decoder"), "decoders")
 
     trainer = get_instance(config.get("trainer"), "trainers")
 

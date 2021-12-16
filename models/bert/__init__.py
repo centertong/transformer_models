@@ -45,4 +45,5 @@ if is_torch_available():
         BertModel,
         BertPreTrainedModel,
         BertForSequenceClassification,
+        BertForSequenceGeneration,
     )

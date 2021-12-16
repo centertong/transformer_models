@@ -19,9 +19,8 @@ from transformers.modeling_utils import (
     PreTrainedModel,
 )
 from transformers import logging
-
 from .embeddings import Embeddings
-from .attentions import gaussian_random_matrix, RfaAttention, makeGateFeature
+from .attentions import gaussian_random_matrix, RfaAttention
 
 
 logger = logging.get_logger(__name__)
@@ -57,6 +56,7 @@ class RfaAttentionLayer(nn.Module):
         self.is_casual = config.is_casual
         self.gate_attn = config.gate_attn
         if self.gate_attn:
+            assert self.is_casual
             self.gate = nn.Linear(config.hidden_size, 1)
 
         
@@ -81,20 +81,17 @@ class RfaAttentionLayer(nn.Module):
             attention_mask_tmp = attention_mask[:, None, :, None]
             attention_mask_tmp = attention_mask_tmp.bool()
             # value_layer.masked_fill_(~attention_mask_tmp, 0.)
-
+        
+        g = None
         if self.gate_attn:
             g = self.gate(hidden_states).squeeze(-1)
             g = torch.sigmoid(g)
-            g = makeGateFeature(g)
-            # g: b, l
-            key_layer = torch.einsum('bhlc, bl-> bhlc, key_layer, g)
-            value_layer = torch.einsum('bhlc, bl-> bhlc, value_layer, g)
 
         projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size,
                                                 num_head=self.num_attention_heads, device=query_layer.device)
         projection_matrix = projection_matrix * (self.repara_w.unsqueeze(2))
         context_layer = RfaAttention(query_layer, key_layer, value_layer, projection_matrix,
-                                    mode=self.kernel_mode, mask=attention_mask_tmp, is_casual=self.is_casual)
+                                    mode=self.kernel_mode, mask=attention_mask_tmp, is_casual=self.is_casual, gate=g)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         

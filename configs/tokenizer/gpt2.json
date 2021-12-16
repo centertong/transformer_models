@@ -1,0 +1,34 @@
+{
+    "normalizer":null,
+    "pre_tokenizer":{
+        "type":"ByteLevel",
+        "add_prefix_space":false,
+        "trim_offsets":true
+    },
+    "post_processor":{
+        "type":"ByteLevel",
+        "add_prefix_space":true,
+        "trim_offsets":false
+    },
+    "decoder":{
+        "type":"ByteLevel",
+        "add_prefix_space":true,
+        "trim_offsets":true
+    },
+    "model":{
+        "type": "BPE",
+        "dropout":null,
+        "unk_token":null,
+        "continuing_subword_prefix":"",
+        "end_of_word_suffix":"",
+        "fuse_unk":false
+    },
+    "trainer": {
+        "type": "BpeTrainer",
+        "vocab_size": 32000,
+        "min_frequency": 5,
+        "limit_alphabet": 6000,
+        "special_tokens": ["[BOS]","[EOS]", "[PAD]", "[MASK]"]
+
+    }
+}

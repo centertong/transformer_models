@@ -11,15 +11,15 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from transformers.activations import ACT2FN
 
 from transformers.modeling_outputs import (
-    BaseModelOutputWithPastAndCrossAttentions,
-    BaseModelOutputWithPoolingAndCrossAttentions,
-    MaskedLMOutput,
-    SequenceClassifierOutput,
-)
+        BaseModelOutputWithPastAndCrossAttentions,
+        BaseModelOutputWithPoolingAndCrossAttentions,
+        MaskedLMOutput,
+        SequenceClassifierOutput,
+        )
 
 from transformers.modeling_utils import (
-    PreTrainedModel,
-)
+        PreTrainedModel,
+        )
 from transformers import logging
 
 from .embeddings import Embeddings
@@ -33,30 +33,30 @@ class AftBaseAttentionLayer(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
-            )
+                    f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
+                    f"heads ({config.num_attention_heads})"
+                    )
 
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
-        
+
         self.mode = config.attention_mode
         if self.mode in ["base", "local"]:
             # self.position_bias = nn.Parameter(torch.rand((config.max_position_embeddings, config.max_position_embeddings), dtype=torch.float32))
-            self.position_bias_u = nn.Parameter(torch.rand((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
-            self.position_bias_v = nn.Parameter(torch.rand((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
+            self.position_bias_u = nn.Parameter(torch.randn((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
+            self.position_bias_v = nn.Parameter(torch.randn((config.max_position_embeddings, config.hidden_size), dtype=torch.float32))
         if self.mode == "conv":
-            self.position_bias = nn.Parameter(torch.rand((self.num_attention_heads, 1, config.local_size, config.local_size), dtype=torch.float32))
+            self.position_bias = nn.Parameter(torch.randn((self.num_attention_heads, 1, config.local_size, config.local_size), dtype=torch.float32))
             self.repara_gamma = nn.Parameter(torch.zeros((self.num_attention_heads,1, 1, 1)))
             self.repara_beta = nn.Parameter(torch.zeros((self.num_attention_heads,1, 1, 1)))
         self.max_length = config.max_position_embeddings
         self.local_size = config.local_size
 
         local_mask = torch.Tensor([
-                    [1. if math.fabs(i-j) < self.local_size else 0. for j in range(self.max_length)] 
-                    for i in range(self.max_length)
-                ])
+            [1. if math.fabs(i-j) < self.local_size else 0. for j in range(self.max_length)] 
+            for i in range(self.max_length)
+            ])
         self.register_buffer('local_mask', local_mask)
 
 
@@ -64,23 +64,23 @@ class AftBaseAttentionLayer(nn.Module):
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
         self.out = nn.Linear(config.hidden_size, config.hidden_size)
-        
+
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
-        
+
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        output_attentions=False,
-    ):
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            output_attentions=False,
+            ):
         if hidden_states.isnan().any():
             print("Before Attention")
             sys.exit(1)
@@ -101,7 +101,7 @@ class AftBaseAttentionLayer(nn.Module):
             bias = self.position_bias_u @ self.position_bias_v.t()
             if self.mode == "local":
                 bias = bias * self.local_mask
-                
+
         if self.mode in ["base", "local"]:    
             context_layer = AftBase(query_layer, key_layer, value_layer, bias)
         elif self.mode == "simple":
@@ -112,12 +112,12 @@ class AftBaseAttentionLayer(nn.Module):
             # print(mean.size(), std.size())
             repara_gamma = self.repara_gamma + 1e-4
             weight = repara_gamma * (self.position_bias - mean) / std + self.repara_beta
-            
+
             context_layer = AftConv(query_layer, key_layer, value_layer, weight)
         if context_layer.isnan().any():
             print("In Attention")
             sys.exit(1)
-        
+
         # Take the dot product between "query" and "key" to get the raw attention scores.
         if self.mode == "conv":
             context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
@@ -137,7 +137,7 @@ class SkipConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
@@ -147,7 +147,7 @@ class ReZeroConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.alpha = torch.nn.parameter.Parameter(torch.tensor(1e-3, dtype=torch.float32))
-        
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.alpha * hidden_states + input_tensor
         return hidden_states
@@ -158,20 +158,20 @@ class AttentionModule(nn.Module):
         super().__init__()
         self.self = AftBaseAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        output_attentions=False,
-    ):
-        self_outputs = self.self(
+            self,
             hidden_states,
-            attention_mask,
-            head_mask,
-            output_attentions,
-        )
+            attention_mask=None,
+            head_mask=None,
+            output_attentions=False,
+            ):
+        self_outputs = self.self(
+                hidden_states,
+                attention_mask,
+                head_mask,
+                output_attentions,
+                )
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
         return outputs
@@ -187,7 +187,7 @@ class FeedForwardLayer(nn.Module):
             self.intermediate_act_fn = config.hidden_act
         self.out = nn.Linear(config.intermediate_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
+
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
@@ -201,7 +201,7 @@ class FeedForwardModule(nn.Module):
         super().__init__()
         self.ffn = FeedForwardLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(self, input_tensor):
         hidden_states = self.ffn(input_tensor)
         hidden_states = self.output(hidden_states, input_tensor)
@@ -217,24 +217,24 @@ class AftLayer(nn.Module):
         self.ffn = FeedForwardModule(config)
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        output_attentions=False,
-    ):
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            output_attentions=False,
+            ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attention_outputs = self.attention(
-            hidden_states,
-            attention_mask,
-            head_mask,
-            output_attentions=output_attentions,
-        )
+                hidden_states,
+                attention_mask,
+                head_mask,
+                output_attentions=output_attentions,
+                )
         attention_output = self_attention_outputs[0]
 
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
 
-        
+
         layer_output = self.ffn(attention_output)
         outputs = (layer_output,) + outputs
 
@@ -250,18 +250,18 @@ class AftEncoder(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_values=None,
-        use_cache=None,
-        output_attentions=False,
-        output_hidden_states=False,
-        return_dict=True,
-    ):
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_values=None,
+            use_cache=None,
+            output_attentions=False,
+            output_hidden_states=False,
+            return_dict=True,
+            ):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
@@ -278,8 +278,8 @@ class AftEncoder(nn.Module):
 
                 if use_cache:
                     logger.warning(
-                        "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
-                    )
+                            "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
+                            )
                     use_cache = False
 
                 def create_custom_forward(module):
@@ -289,20 +289,20 @@ class AftEncoder(nn.Module):
                     return custom_forward
 
                 layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer_module),
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
+                        create_custom_forward(layer_module),
+                        hidden_states,
+                        attention_mask,
+                        layer_head_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        )
             else:
                 layer_outputs = layer_module(
-                    hidden_states,
-                    attention_mask,
-                    layer_head_mask,
-                    output_attentions,
-                )
+                        hidden_states,
+                        attention_mask,
+                        layer_head_mask,
+                        output_attentions,
+                        )
 
             hidden_states = layer_outputs[0]
             if use_cache:
@@ -317,23 +317,23 @@ class AftEncoder(nn.Module):
 
         if not return_dict:
             return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
+                    v
+                    for v in [
+                        hidden_states,
+                        next_decoder_cache,
+                        all_hidden_states,
+                        all_self_attentions,
+                        all_cross_attentions,
+                        ]
+                    if v is not None
+                    )
         return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
+                last_hidden_state=hidden_states,
+                past_key_values=next_decoder_cache,
+                hidden_states=all_hidden_states,
+                attentions=all_self_attentions,
+                cross_attentions=all_cross_attentions,
+                )
 
 
 class AftPooler(nn.Module):
@@ -472,21 +472,21 @@ class AftModel(AftPreTrainedModel):
             self.encoder.layer[layer].attention.prune_heads(heads)
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        position_ids=None,
-        head_mask=None,
-        inputs_embeds=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_values=None,
-        use_cache=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-    ):
+            self,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_values=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            ):
         r"""
         encoder_hidden_states  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
             Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
@@ -495,7 +495,7 @@ class AftModel(AftPreTrainedModel):
             Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
             the cross-attention if the model is configured as a decoder. Mask values selected in ``[0, 1]``:
 
-            - 1 for tokens that are **not masked**,
+                - 1 for tokens that are **not masked**,
             - 0 for tokens that are **masked**.
         past_key_values (:obj:`tuple(tuple(torch.FloatTensor))` of length :obj:`config.n_layers` with each tuple having 4 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
             Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
@@ -509,8 +509,8 @@ class AftModel(AftPreTrainedModel):
         """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+                output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+                )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if self.config.is_decoder:
@@ -546,7 +546,7 @@ class AftModel(AftPreTrainedModel):
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        
+
         #extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
         extended_attention_mask: torch.Tensor = attention_mask
 
@@ -569,24 +569,24 @@ class AftModel(AftPreTrainedModel):
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
-            input_ids=input_ids,
-            position_ids=position_ids,
-            token_type_ids=token_type_ids,
-            inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
-        )
+                input_ids=input_ids,
+                position_ids=position_ids,
+                token_type_ids=token_type_ids,
+                inputs_embeds=inputs_embeds,
+                past_key_values_length=past_key_values_length,
+                )
         encoder_outputs = self.encoder(
-            embedding_output,
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+                embedding_output,
+                attention_mask=extended_attention_mask,
+                head_mask=head_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_extended_attention_mask,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
@@ -594,13 +594,13 @@ class AftModel(AftPreTrainedModel):
             return (sequence_output, pooled_output) + encoder_outputs[1:]
 
         return BaseModelOutputWithPoolingAndCrossAttentions(
-            last_hidden_state=sequence_output,
-            pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions,
-        )
+                last_hidden_state=sequence_output,
+                pooler_output=pooled_output,
+                past_key_values=encoder_outputs.past_key_values,
+                hidden_states=encoder_outputs.hidden_states,
+                attentions=encoder_outputs.attentions,
+                cross_attentions=encoder_outputs.cross_attentions,
+                )
 
 
 
@@ -614,9 +614,9 @@ class AftForMaskedLM(AftPreTrainedModel):
 
         if config.is_decoder:
             logger.warning(
-                "If you want to use `BertForMaskedLM` make sure `config.is_decoder=False` for "
-                "bi-directional self-attention."
-            )
+                    "If you want to use `BertForMaskedLM` make sure `config.is_decoder=False` for "
+                    "bi-directional self-attention."
+                    )
 
         self.bert = AftModel(config, add_pooling_layer=False)
         self.cls = AftOnlyMLMHead(config)
@@ -630,42 +630,42 @@ class AftForMaskedLM(AftPreTrainedModel):
         self.cls.predictions.decoder = new_embeddings
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        position_ids=None,
-        head_mask=None,
-        inputs_embeds=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-    ):
+            self,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Labels for computing the masked language modeling loss. Indices should be in ``[-100, 0, ...,
-            config.vocab_size]`` (see ``input_ids`` docstring) Tokens with indices set to ``-100`` are ignored
+                    config.vocab_size]`` (see ``input_ids`` docstring) Tokens with indices set to ``-100`` are ignored
             (masked), the loss is only computed for the tokens with labels in ``[0, ..., config.vocab_size]``
         """
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                )
 
         sequence_output = outputs[0]
         prediction_scores = self.cls(sequence_output)
@@ -680,11 +680,11 @@ class AftForMaskedLM(AftPreTrainedModel):
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
 
         return MaskedLMOutput(
-            loss=masked_lm_loss,
-            logits=prediction_scores,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+                loss=masked_lm_loss,
+                logits=prediction_scores,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions,
+                )
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **model_kwargs):
         input_shape = input_ids.shape
@@ -696,8 +696,8 @@ class AftForMaskedLM(AftPreTrainedModel):
 
         attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
         dummy_token = torch.full(
-            (effective_batch_size, 1), self.config.pad_token_id, dtype=torch.long, device=input_ids.device
-        )
+                (effective_batch_size, 1), self.config.pad_token_id, dtype=torch.long, device=input_ids.device
+                )
         input_ids = torch.cat([input_ids, dummy_token], dim=1)
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
@@ -714,8 +714,8 @@ class AftForSequenceClassification(AftPreTrainedModel):
 
         self.bert = AftModel(config)
         classifier_dropout = (
-            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
-        )
+                config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+                )
         self.dropout = nn.Dropout(classifier_dropout)
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
 
@@ -723,37 +723,37 @@ class AftForSequenceClassification(AftPreTrainedModel):
         self.init_weights()
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        position_ids=None,
-        head_mask=None,
-        inputs_embeds=None,
-        labels=None,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-    ):
+            self,
+            input_ids=None,
+            attention_mask=None,
+            token_type_ids=None,
+            position_ids=None,
+            head_mask=None,
+            inputs_embeds=None,
+            labels=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[0, ...,
-            config.num_labels - 1]`. If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
+                    config.num_labels - 1]`. If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
             If :obj:`config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         outputs = self.bert(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            position_ids=position_ids,
-            head_mask=head_mask,
-            inputs_embeds=inputs_embeds,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
+                input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                )
 
         pooled_output = outputs[1]
 
@@ -786,11 +786,11 @@ class AftForSequenceClassification(AftPreTrainedModel):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        
+
 
         return SequenceClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+                loss=loss,
+                logits=logits,
+                hidden_states=outputs.hidden_states,
+                attentions=outputs.attentions,
+                )
