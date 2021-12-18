@@ -36,7 +36,7 @@ python run/train_klue.py --config configs/model/bert.json --name bert \
 ### KLUE Dataset (STS, NLI, TC)
 
 During 10 epoch training, select best performance for validation set.  
-In STS, models don't reach convergence during 10 epoch.
+tokenizer was created with kowiki dataset by huggingface tokenizers library.
 
 |Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)|
 |-----|---|---|---|
@@ -49,7 +49,7 @@ In STS, models don't reach convergence during 10 epoch.
 |fastformer|0.775|0.363|0.422|
 |scatterbrain|0.447|0.377|0.345|
 |abc|0.768| - |0.403|
-|scaling| - | - | - |
+|scaling|0.733| - | - |
 
 ## Reference
 

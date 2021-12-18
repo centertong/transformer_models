@@ -15,7 +15,7 @@
 # limitations under the License.
 """PyTorch BERT model. """
 
-
+import sys
 import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -47,6 +47,7 @@ from transformers import logging
 
 from .embeddings import Embeddings
 from .attentions import MultiHeadAttention
+from einops import repeat
 
 
 logger = logging.get_logger(__name__)
@@ -55,13 +56,16 @@ logger = logging.get_logger(__name__)
 class MultiplicativeLayer(nn.Module):
     def __init__(self, hidden_size, sparsity_level):
         super().__init__()
-        self.d = Parameter(torch.rand(sparsity_level, hidden_size))
-        self.e = Parameter(torch.rand(
+        self.d = Parameter(torch.randn(sparsity_level, hidden_size))
+        self.e = Parameter(torch.randn(
             hidden_size, hidden_size // sparsity_level))
 
-    def forward(self, x):
+    def forward(self, x, flatten=False):
+        s = x.size()
         x = torch.einsum('bld, sd->blsd', x, self.d)
         x = torch.einsum('blsd, dm->blsm', x, self.e)
+        if flatten:
+            x = x.view(*s)
         return x
 
 
@@ -88,6 +92,7 @@ class MultiplicativeConvAttentionLayer(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
+
 
     def forward(
         self,
@@ -139,6 +144,9 @@ class MultiplicativeAttentionLayer(nn.Module):
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
 
+    def transpose_for_scores(self, x):
+        return x.permute(0, 2, 1, 3)
+
     def forward(
         self,
         hidden_states,
@@ -158,98 +166,14 @@ class MultiplicativeAttentionLayer(nn.Module):
         new_context_layer_shape = context_layer.size()[:-2] + (-1,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        context_layer = self.out(context_layer)
-        context_layer = self.dropout(context_layer)
-        context_layer = context_layer.view(*new_context_layer_shape)
-
-        outputs = (context_layer, attention_probs) if output_attentions else (
-            context_layer,)
-
-        return outputs
-
-
-class SelfAttentionLayer(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
-            raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
-            )
-
-        self.num_attention_heads = config.num_attention_heads
-        self.attention_head_size = int(
-            config.hidden_size / config.num_attention_heads)
-        self.all_head_size = self.num_attention_heads * self.attention_head_size
-
-        self.query = nn.Linear(config.hidden_size, self.all_head_size)
-        self.key = nn.Linear(config.hidden_size, self.all_head_size)
-        self.value = nn.Linear(config.hidden_size, self.all_head_size)
-        self.out = nn.Linear(config.hidden_size, config.hidden_size)
-
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.position_embedding_type = getattr(
-            config, "position_embedding_type", "absolute")
-        self.is_casual = config.is_casual
-
-    def transpose_for_scores(self, x):
-        new_x_shape = x.size()[
-            :-1] + (self.num_attention_heads, self.attention_head_size)
-        x = x.view(*new_x_shape)
-        return x.permute(0, 2, 1, 3)
-
-    def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        output_attentions=False,
-    ):
-
-        query_layer = self.transpose_for_scores(self.query(hidden_states))
-        key_layer = self.transpose_for_scores(self.key(hidden_states))
-        value_layer = self.transpose_for_scores(self.value(hidden_states))
-
-        # Take the dot product between "query" and "key" to get the raw attention scores.
-        attention_scores = torch.matmul(
-            query_layer, key_layer.transpose(-1, -2))
-
-        attention_scores = attention_scores / \
-            math.sqrt(self.attention_head_size)
-        if attention_mask is not None:
-            # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
-            if self.is_casual:
-                trimask = torch.ones(
-                    (query_layer.size(-2), query_layer.size(-2)), device=query_layer.device)
-                trimask = torch.tril(trimask)[None, None, :, :]
-                attention_mask = attention_mask * trimask
-            attention_scores = attention_scores + attention_mask
-
-        # Normalize the attention scores to probabilities.
-        attention_probs = nn.Softmax(dim=-1)(attention_scores)
-
-        # This is actually dropping out entire tokens to attend to, which might
-        # seem a bit unusual, but is taken from the original Transformer paper.
-        attention_probs = self.dropout(attention_probs)
-
-        # Mask heads if we want to
-        if head_mask is not None:
-            attention_probs = attention_probs * head_mask
-
-        context_layer = torch.matmul(attention_probs, value_layer)
-
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[
-            :-2] + (self.all_head_size,)
-        context_layer = context_layer.view(*new_context_layer_shape)
-
-        context_layer = self.out(context_layer)
+        context_layer = self.out(context_layer, flatten=True)
         context_layer = self.dropout(context_layer)
 
         outputs = (context_layer, attention_probs) if output_attentions else (
             context_layer,)
 
         return outputs
+
 
 
 class SkipConnectionLayer(nn.Module):
@@ -278,8 +202,7 @@ class AttentionModule(nn.Module):
     def __init__(self, config):
         super().__init__()
         if config.qkv_mode == "conv":
-            # self.self = MultiplicativeConvAttentionLayer(config)
-            self.self = SelfAttentionLayer(config)
+            self.self = MultiplicativeConvAttentionLayer(config)
         else:
             self.self = MultiplicativeAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
