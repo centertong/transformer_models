@@ -38,9 +38,14 @@ def MultiHeadChunkAttention(query, key, value, chunk_size=128, mask=None, dropou
 
         return exp_values, exp_weights.sum(dim=-1, keepdim=True), max_score.squeeze(-1)
 
-    chunk_values, chunk_weights, chunk_max = checkpoint.checkpoint(
-        summarize_chunk, query, key, value, mask, dropout, head_mask
-    )
+    if query.requires_grad:
+        chunk_values, chunk_weights, chunk_max = checkpoint.checkpoint(
+            summarize_chunk, query, key, value, mask, dropout, head_mask
+        )
+    else:
+        chunk_values, chunk_weights, chunk_max = summarize_chunk(
+            query, key, value, mask, dropout, head_mask
+        )
 
     # chunk_values = exp_values
     # chunk_weights = exp_weights.sum(dim=-1, keepdim=True)
