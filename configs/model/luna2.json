@@ -11,8 +11,8 @@
 	"intermediate_size": 3072,
 	"layer_norm_eps": 1e-12,
 	"max_position_embeddings": 512,
-	"model_type": "abc",
-	"memory_slots": 100,
+	"model_type": "luna",
+	"global_memory_size": 200,
 	"num_attention_heads": 12,
 	"num_hidden_layers": 12,
 	"pad_token_id": 0,
@@ -21,6 +21,5 @@
 	"type_vocab_size": 2,
 	"use_cache": true,
 	"vocab_size": 32000,
-	"classifier_dropout": null,
-	"is_casual": false
+	"classifier_dropout": null
 }

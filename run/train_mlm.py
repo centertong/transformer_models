@@ -18,7 +18,12 @@ from models import (
     PerformerForMaskedLM,
     RfaForMaskedLM,
     LiteForMaskedLM,
-    AftForMaskedLM
+    AftForMaskedLM,
+    FastformerForMaskedLM,
+    LunaForMaskedLM,
+    ScatterBrainForMaskedLM,
+    AbcForMaskedLM,
+    ScalingForMaskedLM,
 )
 
 from dataset.mlm import DatasetForMLM
@@ -48,7 +53,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--tokenizer", type=str, required=True)
-    parser.add_argument("--save_path", type=str, required=True)
+    parser.add_argument("--save_path", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=12)
@@ -72,6 +77,16 @@ def getModel(config_path):
         return LiteForMaskedLM(config)
     if config.model_type == "aft":
         return AftForMaskedLM(config)
+    if config.model_type == "fastformer":
+        return FastformerForMaskedLM(config)
+    if config.model_type == "luna":
+        return LunaForMaskedLM(config)
+    if config.model_type == "scatterbrain":
+        return ScatterBrainForMaskedLM(config)
+    if config.model_type == "abc":
+        return AbcForMaskedLM(config)
+    if config.model_type == "scaling":
+        return ScalingForMaskedLM(config)
     
 
 def main():
@@ -93,7 +108,7 @@ def main():
 
     
     # optimizer = Adafactor(model.parameters(), lr= 1e-3, relative_step=False)
-    optimizer = AdamW(model.parameters(), lr= 1e-3)
+    optimizer = AdamW(model.parameters(), lr= 1e-3, weight_decay= 1e-4)
         
     trainer = MlmTrainer(model, tokenizer, optimizer,model_name=args.name, device=args.device, checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)
 

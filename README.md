@@ -14,6 +14,7 @@ Linear Complexity Transformers Test using KLUE dataset
 * scatterbrain: ScatterBrain
 * abc: ATTENTION WITH BOUNDED-MEMORY CONTROL
 * scaling: Scaling Transformers [work in progress]
+* mem_eff: SELF-ATTENTION DOES NOT NEED O(n2) MEMORY
 
 ## Usages
 
@@ -66,6 +67,7 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 11. [Scatterbrain: Unifying Sparse and Low-rank Attention Approximation][11]
 12. [ABC: ATTENTION WITH BOUNDED-MEMORY CONTROL][12]
 13. [Sparse is Enough in Scaling Transformers][13]
+14. [SELF-ATTENTION DOES NOT NEED O(n2) MEMORY] [14]
 
 [1]: https://github.com/huggingface/transformers
 [2]: https://github.com/huggingface/tokenizers
@@ -80,3 +82,4 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 [11]: https://arxiv.org/abs/2110.15343
 [12]: https://arxiv.org/abs/2110.02488
 [13]: https://arxiv.org/abs/2111.12763
+[14]: https://arxiv.org/abs/2112.05682

@@ -203,6 +203,7 @@ class Trainer(object):
                 results_file.write(f'{datetime.now()} | Step: {step} | Eval Loss: {total_eval_loss}\n')
                 results_file.close()
 
+        print(eval_loss / eval_steps)
         self.print_metric()
 
     def metric(self, preds=None, labels=None):

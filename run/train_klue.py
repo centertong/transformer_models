@@ -21,9 +21,11 @@ from models import (
     AftForSequenceClassification,
     FastformerForSequenceClassification,
     LunaForSequenceClassification,
+    Luna2ForSequenceClassification,
     ScatterBrainForSequenceClassification,
     AbcForSequenceClassification,
     ScalingForSequenceClassification,
+    BertForSequenceClassification2
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -105,12 +107,16 @@ def getModel(config_path, num_labels):
         return FastformerForSequenceClassification(config)
     if config.model_type == "luna":
         return LunaForSequenceClassification(config)
+    if config.model_type == "luna2":
+        return Luna2ForSequenceClassification(config)
     if config.model_type == "scatterbrain":
         return ScatterBrainForSequenceClassification(config)
     if config.model_type == "abc":
         return AbcForSequenceClassification(config)
     if config.model_type == "scaling":
         return ScalingForSequenceClassification(config)
+    if config.model_type == "mem_eff":
+        return BertForSequenceClassification2(config)
     
 
 def main():

@@ -24,6 +24,8 @@ from .lite import *
 from .aft import *
 from .fastformer import *
 from .luna import *
+from .luna2 import Luna2ForSequenceClassification
 from .scatterbrain import *
 from .abc import *
 from .scaling import *
+from .mem_eff import BertForSequenceClassification2
