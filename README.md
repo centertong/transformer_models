@@ -77,8 +77,8 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 11. [Scatterbrain: Unifying Sparse and Low-rank Attention Approximation][11]
 12. [ABC: ATTENTION WITH BOUNDED-MEMORY CONTROL][12]
 13. [Sparse is Enough in Scaling Transformers][13]
-14. [SELF-ATTENTION DOES NOT NEED O(n2) MEMORY] [14]
-15. [KVT: k-NN Attention for Boosting Vision Transformers] [15]
+14. [SELF-ATTENTION DOES NOT NEED O(n2) MEMORY][14]
+15. [KVT: k-NN Attention for Boosting Vision Transformers][15]
 
 [1]: https://github.com/huggingface/transformers
 [2]: https://github.com/huggingface/tokenizers
