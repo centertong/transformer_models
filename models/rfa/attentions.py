@@ -4,11 +4,19 @@ import torch.nn.functional as F
 from einops import repeat
 
 
-def linear_attention(q, k, v, is_casual, gate):
+def linear_attention(q, k, v):
+    k_cumsum = k.sum(dim=-2)
+    kv = torch.einsum('bhlm, bhlc -> bhmc', k, v)
+
+    D_inv = 1. / torch.einsum('...lc, ...c -> ...l', q, k_cumsum.type_as(q))
+
+    context = torch.einsum('bhlm, bhmc -> bhlc', q, kv)
+    out = torch.einsum('bhlc, bhl -> bhlc', context, D_inv)
+    return out
+
+def causal_linear_attention(q, k, v, gate):
     kv = torch.einsum('bhlm, bhlc -> bhlmc', k, v)
-    mask = torch.ones((q.size(-2), q.size(-2)), device=q.device)
-    if is_casual:
-        mask = torch.triu(mask)
+    mask = torch.ones((q.size(-2), q.size(-2)), device=q.device, requires_grad=False).triu()
 
     if gate is not None:
         gate = makeGateFeature(gate).t()
@@ -28,9 +36,8 @@ def linear_attention(q, k, v, is_casual, gate):
     out = torch.einsum('bhlc, bhl -> bhlc', context, D_inv)
     return out
 
-
 def gaussian_random_matrix(nb_rows, nb_columns, num_head, device="cpu"):
-    block_list = [torch.randn((1, 1, nb_columns), device=device)
+    block_list = [torch.randn((1, 1, nb_columns), device=device, requires_grad=False)
                   for _ in range(num_head * nb_rows)]
     matrix = torch.cat(block_list).view(num_head, nb_rows, nb_columns)
     return matrix
@@ -51,7 +58,7 @@ def random_feature_map(data, projection_matrix, mode="arccos"):
     return data_dash
 
 
-def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=None, is_casual=False, gate=None):
+def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=None, is_causal=False, gate=None):
     query = random_feature_map(
         query, projection_matrix=projection_matrix, mode=mode)
     key = random_feature_map(
@@ -59,7 +66,7 @@ def RfaAttention(query, key, value, projection_matrix=None, mode="arccos", mask=
     if mask is not None:
         key.masked_fill_(~mask, 0.)
 
-    out = linear_attention(query, key, value, is_casual, gate)
+    out = causal_linear_attention(query, key, value, gate) if is_causal else linear_attention(query, key, value)
     return out
 
 
@@ -71,8 +78,10 @@ def makeGateFeature(gate):
     gate = gate.log()
     o_gate = o_gate.log()
 
-    tri_one = torch.ones((length, length), device=gate.device).triu(diagonal=1)
-    ones = torch.ones((length, length), device=gate.device).triu()
+    tri_one = torch.ones((length, length), device=gate.device,
+                         requires_grad=False).triu(diagonal=1)
+    ones = torch.ones((length, length), device=gate.device,
+                      requires_grad=False).triu()
 
     gate = torch.einsum('bl, lj -> blj', gate, tri_one)
 

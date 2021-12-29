@@ -47,20 +47,20 @@ During 10 epoch training, select best performance for validation set.
 
 tokenizer was created with kowiki dataset by huggingface tokenizers library.
 
-|Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)| Memory Usage(GB) | seq/sec |
-|-----|---|---|---|---|---|
-|Transformer Encoder|0.776|0.416|0.382| - | - |
-|Performer|0.750| - |0.340| - | - |
-|rfa|0.774|0.416|0.377| - | - |
-|lite|0.769|0.388|0.402| - | - |
-|aft|0.732| - |0.374| - | - |
-|luna|0.562|0.356|0.397| - | - |
-|fastformer|0.775|0.363|0.422| - | - |
-|scatterbrain|0.447|0.377|0.345| - | - |
-|abc|0.768| - |0.403| - | - |
-|scaling|0.733| - | - | - | - |
-|mem_eff|0.748| - | - | - | - |
-|kvt|0.727|0.076| - |14.15|54.75|
+|Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)| Memory Usage(GB) |
+|-----|---|---|---|---|
+|Transformer Encoder|0.776|0.416|0.382|15.80|
+|Performer|0.750| - |0.340|10.69|
+|rfa|0.774|0.416|0.377|10.03|
+|lite|0.769|0.388|0.402|14.65|
+|aft|0.732| - |0.374|8.90|
+|luna|0.562|0.356|0.397|16.58|
+|fastformer|0.775|0.363|0.422|9.74|
+|scatterbrain|0.447|0.377|0.345|12.91|
+|abc|0.768| - |0.403|12.16|
+|scaling|0.733| - | - |25.15|
+|mem_eff|0.748| - | - |11.57|
+|kvt|0.727|0.076| - |16.17|
 
 ## Reference
 

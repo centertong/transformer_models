@@ -15,7 +15,7 @@ def linear_attention(q, k, v):
     return out
 
 
-def casual_linear_attention(q, k, v):
+def causal_linear_attention(q, k, v):
     g = torch.einsum('bhlm, bhlc -> bhlmc', k, v)
     trimask = torch.ones((q.size(-2), q.size(-2)))
     trimask = torch.triu(trimask)
@@ -113,7 +113,7 @@ def gaussian_orthogonal_random_matrix(nb_rows, nb_columns, scaling=0, device=Non
     return torch.diag(multiplier) @ final_matrix
 
 
-def FAVORPlusAttention(query, key, value, projection_matrix, attention_mask=None, mode="softmax", is_casual=False):
+def FAVORPlusAttention(query, key, value, projection_matrix, attention_mask=None, mode="softmax", is_causal=False):
     device = query.device
     if attention_mask is not None:
         attention_mask = attention_mask[:, None, :, None]
@@ -132,8 +132,8 @@ def FAVORPlusAttention(query, key, value, projection_matrix, attention_mask=None
         key = softmax_kernel(
             key, projection_matrix=projection_matrix, device=device, is_query=False)
 
-    if is_casual:
-        out = casual_linear_attention(query, key, value)
+    if is_causal:
+        out = causal_linear_attention(query, key, value)
     else:
         out = linear_attention(query, key, value)
     return out

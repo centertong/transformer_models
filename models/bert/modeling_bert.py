@@ -72,7 +72,7 @@ class SelfAttentionLayer(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
-        self.is_casual = config.is_casual
+        self.is_causal = config.is_causal
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[
@@ -100,7 +100,7 @@ class SelfAttentionLayer(nn.Module):
             math.sqrt(self.attention_head_size)
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
-            if self.is_casual:
+            if self.is_causal:
                 trimask = torch.ones(
                     (query_layer.size(-2), query_layer.size(-2)), device=query_layer.device)
                 trimask = torch.tril(trimask)[None, None, :, :]

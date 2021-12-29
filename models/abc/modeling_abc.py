@@ -74,7 +74,7 @@ class AbcAttentionLayer(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
-        self.is_casual = config.is_casual
+        self.is_causal = config.is_causal
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, -1)

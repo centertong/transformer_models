@@ -2,19 +2,19 @@ import json
 from torch.utils.data import Dataset
 import numpy as np
 
-def getKlueDataset(type, path, tok):
-    if type == "nli": return NLIdataset(path, tok)
-    if type == "tc": return TCdataset(path, tok)
-    if type == "sts": return STSdataset(path, tok)
+def getKlueDataset(type, path, tok, max_len=512):
+    if type == "nli": return NLIdataset(path, tok, max_len)
+    if type == "tc": return TCdataset(path, tok, max_len)
+    if type == "sts": return STSdataset(path, tok, max_len)
 
 class NLIdataset(Dataset):
-    def __init__(self, path, tok):
+    def __init__(self, path, tok, max_len=512):
         super(NLIdataset, self).__init__()
         with open(path, 'r', encoding="utf-8") as f:
             data = json.load(f)
         self.tok = tok
         self.data, self.l2c, self.c2l = self.parse(data)
-        self.max_len = 512
+        self.max_len = max_len
         
     def parse(self, data):
         returns = [{"premise": item['premise'], "hypothesis": item['hypothesis'], 'label': item['gold_label']} for item in data]
@@ -42,13 +42,13 @@ class NLIdataset(Dataset):
 
 
 class TCdataset(Dataset):
-    def __init__(self, path, tok):
+    def __init__(self, path, tok, max_len=512):
         super(TCdataset, self).__init__()
         with open(path, 'r', encoding="utf-8") as f:
             data = json.load(f)
         self.tok = tok
         self.data, self.c2l, self.l2c = self.parse(data)
-        self.max_len = 512
+        self.max_len = max_len
         
     def parse(self, data):
         returns = [{"input": item['title'], "category": item['label']} for item in data]
@@ -81,13 +81,13 @@ class TCdataset(Dataset):
 
 
 class STSdataset(Dataset):
-    def __init__(self, path, tok):
+    def __init__(self, path, tok, max_len=512):
         super(STSdataset, self).__init__()
         with open(path, 'r', encoding="utf-8") as f:
             data = json.load(f)
         self.tok = tok
         self.data = self.parse(data)
-        self.max_len = 512
+        self.max_len = max_len
         
     def parse(self, data):
         returns = [{"sent1": item['sentence1'], "sent2": item['sentence2'], 'logit': item['labels']['label'], 'label': item['labels']['binary-label'] } for item in data]

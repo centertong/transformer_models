@@ -27,6 +27,7 @@ from models import (
     ScalingForSequenceClassification,
     KvtForSequenceClassification,
     MemEffForSequenceClassification,
+    FfnForSequenceClassification
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -75,6 +76,7 @@ def parse_args():
     parser.add_argument("--type", type=str, choices=['sts', 'tc', 'nli'])
     parser.add_argument("--batch_size", type=int, default=12)
     parser.add_argument("--name", type=str, default="model")
+    parser.add_argument("--max_len", type=int, default=512)
     return parser.parse_args()
 
 def getPath(type):
@@ -120,6 +122,8 @@ def getModel(config_path, num_labels):
         return MemEffForSequenceClassification(config)
     if config.model_type == "kvt":
         return KvtForSequenceClassification(config)
+    if config.model_type == "ffn":
+        return FfnForSequenceClassification(config)
     
 
 def main():
@@ -135,8 +139,8 @@ def main():
     tokenizer.add_special_tokens({'mask_token': '[MASK]'})
     
     train_path, dev_path = getPath(args.type)
-    train_dataset = getKlueDataset(args.type, train_path, tokenizer)
-    eval_dataset = getKlueDataset(args.type, dev_path, tokenizer)
+    train_dataset = getKlueDataset(args.type, train_path, tokenizer, args.max_len)
+    eval_dataset = getKlueDataset(args.type, dev_path, tokenizer, args.max_len)
         
     if args.type in ['sts']:
         num_labels = 1

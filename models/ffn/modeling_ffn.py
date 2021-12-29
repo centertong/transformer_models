@@ -1,32 +1,56 @@
+# coding=utf-8
+# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
+# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""PyTorch BERT model. """
+
+
 import math
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import torch
-from torch._C import device
 import torch.utils.checkpoint
+from packaging import version
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers.activations import ACT2FN
-
+from transformers.file_utils import (
+    ModelOutput,
+)
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     BaseModelOutputWithPoolingAndCrossAttentions,
     MaskedLMOutput,
     SequenceClassifierOutput,
+    CausalLMOutputWithCrossAttentions,
 )
 
 from transformers.modeling_utils import (
     PreTrainedModel,
+    apply_chunking_to_forward,
 )
 from transformers import logging
+
 from .embeddings import Embeddings
-from .attentions import gaussian_random_matrix, RfaAttention
 
 
 logger = logging.get_logger(__name__)
 
 
-class RfaAttentionLayer(nn.Module):
+class SelfAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
@@ -36,32 +60,23 @@ class RfaAttentionLayer(nn.Module):
             )
 
         self.num_attention_heads = config.num_attention_heads
-        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.attention_head_size = int(
+            config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.nb_features = config.nb_features# int(4 * math.log(self.attention_head_size))
-        self.kernel_mode = config.kernel_method
-        # projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size, num_head=self.num_attention_heads)
-        # self.register_buffer('projection_matrix', projection_matrix)
-
-        self.repara_w = nn.Parameter(torch.ones((self.num_attention_heads, self.nb_features), dtype=torch.float32))
-        
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
         self.out = nn.Linear(config.hidden_size, config.hidden_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
+        self.position_embedding_type = getattr(
+            config, "position_embedding_type", "absolute")
         self.is_causal = config.is_causal
-        self.gate_attn = config.gate_attn
-        if self.gate_attn:
-            assert self.is_causal
-            self.gate = nn.Linear(config.hidden_size, 1)
 
-        
     def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        new_x_shape = x.size()[
+            :-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
@@ -72,47 +87,59 @@ class RfaAttentionLayer(nn.Module):
         head_mask=None,
         output_attentions=False,
     ):
-        
+
         query_layer = self.transpose_for_scores(self.query(hidden_states))
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
 
-        if attention_mask is not None:
-            attention_mask_tmp = attention_mask[:, None, :, None]
-            attention_mask_tmp = attention_mask_tmp.bool()
-            # value_layer.masked_fill_(~attention_mask_tmp, 0.)
-        
-        g = None
-        if self.gate_attn:
-            g = self.gate(hidden_states).squeeze(-1)
-            g = torch.sigmoid(g)
-
-        projection_matrix = gaussian_random_matrix(nb_rows = self.nb_features, nb_columns =self.attention_head_size,
-                                                num_head=self.num_attention_heads, device=query_layer.device).detach()
-        projection_matrix = projection_matrix * (self.repara_w.unsqueeze(2))
-        context_layer = RfaAttention(query_layer, key_layer, value_layer, projection_matrix,
-                                    mode=self.kernel_mode, mask=attention_mask_tmp, is_causal=self.is_causal, gate=g)
-
         # Take the dot product between "query" and "key" to get the raw attention scores.
-        
+        attention_scores = torch.matmul(
+            query_layer, key_layer.transpose(-1, -2))
+
+        attention_scores = attention_scores / \
+            math.sqrt(self.attention_head_size)
+        if attention_mask is not None:
+            # Apply the attention mask is (precomputed for all layers in FfnModel forward() function)
+            if self.is_causal:
+                trimask = torch.ones(
+                    (query_layer.size(-2), query_layer.size(-2)), device=query_layer.device)
+                trimask = torch.tril(trimask)[None, None, :, :]
+                attention_mask = attention_mask * trimask
+            attention_scores = attention_scores + attention_mask
+
+        # Normalize the attention scores to probabilities.
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
+
+        # This is actually dropping out entire tokens to attend to, which might
+        # seem a bit unusual, but is taken from the original Transformer paper.
+        attention_probs = self.dropout(attention_probs)
+
+        # Mask heads if we want to
+        if head_mask is not None:
+            attention_probs = attention_probs * head_mask
+
+        context_layer = torch.matmul(attention_probs, value_layer)
+
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        new_context_layer_shape = context_layer.size()[
+            :-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
         context_layer = self.out(context_layer)
         context_layer = self.dropout(context_layer)
 
-        outputs = (context_layer,)
+        outputs = (context_layer, attention_probs) if output_attentions else (
+            context_layer,)
 
         return outputs
-
 
 
 class SkipConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
@@ -121,8 +148,9 @@ class SkipConnectionLayer(nn.Module):
 class ReZeroConnectionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.alpha = torch.nn.parameter.Parameter(torch.tensor(1e-3, dtype=torch.float32))
-        
+        self.alpha = torch.nn.parameter.Parameter(
+            torch.tensor(1e-3, dtype=torch.float32))
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.alpha * hidden_states + input_tensor
         return hidden_states
@@ -131,9 +159,9 @@ class ReZeroConnectionLayer(nn.Module):
 class AttentionModule(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.self = RfaAttentionLayer(config)
+        self.self = SelfAttentionLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(
         self,
         hidden_states,
@@ -148,7 +176,8 @@ class AttentionModule(nn.Module):
             output_attentions,
         )
         attention_output = self.output(self_outputs[0], hidden_states)
-        outputs = (attention_output,) + self_outputs[1:]  # add attentions if we output them
+        # add attentions if we output them
+        outputs = (attention_output,) + self_outputs[1:]
         return outputs
 
 
@@ -162,7 +191,7 @@ class FeedForwardLayer(nn.Module):
             self.intermediate_act_fn = config.hidden_act
         self.out = nn.Linear(config.intermediate_size, config.hidden_size)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
+
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
@@ -176,19 +205,19 @@ class FeedForwardModule(nn.Module):
         super().__init__()
         self.ffn = FeedForwardLayer(config)
         self.output = ReZeroConnectionLayer(config)
-        
+
     def forward(self, input_tensor):
         hidden_states = self.ffn(input_tensor)
         hidden_states = self.output(hidden_states, input_tensor)
         return hidden_states
 
 
-class RfaLayer(nn.Module):
+class FfnLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
-        self.attention = AttentionModule(config)
+        # self.attention = AttentionModule(config)
         self.ffn = FeedForwardModule(config)
 
     def forward(
@@ -199,29 +228,20 @@ class RfaLayer(nn.Module):
         output_attentions=False,
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
-        self_attention_outputs = self.attention(
-            hidden_states,
-            attention_mask,
-            head_mask,
-            output_attentions=output_attentions,
-        )
-        attention_output = self_attention_outputs[0]
 
-        outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
-
-        
-        layer_output = self.ffn(attention_output)
-        outputs = (layer_output,) + outputs
+        layer_output = self.ffn(hidden_states)
+        outputs = (layer_output,)  
 
         # if decoder, return the attn key/values as the last output
         return outputs
 
 
-class RfaEncoder(nn.Module):
+class FfnEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([RfaLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([FfnLayer(config)
+                                   for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
     def forward(
@@ -285,7 +305,8 @@ class RfaEncoder(nn.Module):
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
                 if self.config.add_cross_attention:
-                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+                    all_cross_attentions = all_cross_attentions + \
+                        (layer_outputs[2],)
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -311,7 +332,7 @@ class RfaEncoder(nn.Module):
         )
 
 
-class RfaPooler(nn.Module):
+class FfnPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -326,7 +347,7 @@ class RfaPooler(nn.Module):
         return pooled_output
 
 
-class RfaPredictionHeadTransform(nn.Module):
+class FfnPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -334,7 +355,8 @@ class RfaPredictionHeadTransform(nn.Module):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -343,14 +365,15 @@ class RfaPredictionHeadTransform(nn.Module):
         return hidden_states
 
 
-class RfaLMPredictionHead(nn.Module):
+class FfnLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.transform = RfaPredictionHeadTransform(config)
+        self.transform = FfnPredictionHeadTransform(config)
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
-        self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.decoder = nn.Linear(
+            config.hidden_size, config.vocab_size, bias=False)
 
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
 
@@ -363,25 +386,23 @@ class RfaLMPredictionHead(nn.Module):
         return hidden_states
 
 
-class RfaOnlyMLMHead(nn.Module):
+class FfnOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.predictions = RfaLMPredictionHead(config)
+        self.predictions = FfnLMPredictionHead(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
 
-
-
-class RfaPreTrainedModel(PreTrainedModel):
+class FfnPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    # config_class = RfaConfig
+    # config_class = FfnConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -391,11 +412,13 @@ class RfaPreTrainedModel(PreTrainedModel):
         if isinstance(module, nn.Linear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(
+                mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(
+                mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
@@ -403,12 +426,11 @@ class RfaPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, RfaEncoder):
+        if isinstance(module, FfnEncoder):
             module.gradient_checkpointing = value
 
 
-
-class RfaModel(RfaPreTrainedModel):
+class FfnModel(FfnPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -427,9 +449,9 @@ class RfaModel(RfaPreTrainedModel):
         self.config = config
 
         self.embeddings = Embeddings(config)
-        self.encoder = RfaEncoder(config)
+        self.encoder = FfnEncoder(config)
 
-        self.pooler = RfaPooler(config) if add_pooling_layer else None
+        self.pooler = FfnPooler(config) if add_pooling_layer else None
 
         self.init_weights()
 
@@ -495,13 +517,15 @@ class RfaModel(RfaPreTrainedModel):
             use_cache = False
 
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
-            raise ValueError("You have to specify either input_ids or inputs_embeds")
+            raise ValueError(
+                "You have to specify either input_ids or inputs_embeds")
 
         batch_size, seq_length = input_shape
         device = input_ids.device if input_ids is not None else inputs_embeds.device
@@ -510,30 +534,35 @@ class RfaModel(RfaPreTrainedModel):
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
 
         if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
+            attention_mask = torch.ones(
+                ((batch_size, seq_length + past_key_values_length)), device=device)
 
         if token_type_ids is None:
             if hasattr(self.embeddings, "token_type_ids"):
                 buffered_token_type_ids = self.embeddings.token_type_ids[:, :seq_length]
-                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
+                buffered_token_type_ids_expanded = buffered_token_type_ids.expand(
+                    batch_size, seq_length)
                 token_type_ids = buffered_token_type_ids_expanded
             else:
-                token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+                token_type_ids = torch.zeros(
+                    input_shape, dtype=torch.long, device=device)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        
-        #extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
-        extended_attention_mask: torch.Tensor = attention_mask
+        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(
+            attention_mask, input_shape, device)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
         if self.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
-            encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
+            encoder_hidden_shape = (
+                encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
-            encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
+                encoder_attention_mask = torch.ones(
+                    encoder_hidden_shape, device=device)
+            encoder_extended_attention_mask = self.invert_attention_mask(
+                encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
 
@@ -542,7 +571,8 @@ class RfaModel(RfaPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(
+            head_mask, self.config.num_hidden_layers)
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
@@ -564,7 +594,8 @@ class RfaModel(RfaPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
-        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+        pooled_output = self.pooler(
+            sequence_output) if self.pooler is not None else None
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -579,23 +610,23 @@ class RfaModel(RfaPreTrainedModel):
         )
 
 
-
-class RfaForMaskedLM(RfaPreTrainedModel):
+class FfnForMaskedLM(FfnPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
-    _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
+    _keys_to_ignore_on_load_missing = [
+        r"position_ids", r"predictions.decoder.bias"]
 
     def __init__(self, config):
         super().__init__(config)
 
         if config.is_decoder:
             logger.warning(
-                "If you want to use `BertForMaskedLM` make sure `config.is_decoder=False` for "
+                "If you want to use `FfnForMaskedLM` make sure `config.is_decoder=False` for "
                 "bi-directional self-attention."
             )
 
-        self.bert = RfaModel(config, add_pooling_layer=False)
-        self.cls = RfaOnlyMLMHead(config)
+        self.bert = FfnModel(config, add_pooling_layer=False)
+        self.cls = FfnOnlyMLMHead(config)
 
         self.init_weights()
 
@@ -649,7 +680,8 @@ class RfaForMaskedLM(RfaPreTrainedModel):
         masked_lm_loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+            masked_lm_loss = loss_fct(
+                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
@@ -670,7 +702,8 @@ class RfaForMaskedLM(RfaPreTrainedModel):
         if self.config.pad_token_id is None:
             raise ValueError("The PAD token should be defined for generation")
 
-        attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
+        attention_mask = torch.cat(
+            [attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
         dummy_token = torch.full(
             (effective_batch_size, 1), self.config.pad_token_id, dtype=torch.long, device=input_ids.device
         )
@@ -679,16 +712,13 @@ class RfaForMaskedLM(RfaPreTrainedModel):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
-
-
-
-class RfaForSequenceClassification(RfaPreTrainedModel):
+class FfnForSequenceClassification(FfnPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = RfaModel(config)
+        self.bert = FfnModel(config)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )
@@ -754,7 +784,8 @@ class RfaForSequenceClassification(RfaPreTrainedModel):
                     loss = loss_fct(logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss = loss_fct(
+                    logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = BCEWithLogitsLoss()
                 loss = loss_fct(logits, labels)
@@ -762,14 +793,84 @@ class RfaForSequenceClassification(RfaPreTrainedModel):
             output = (logits,) + outputs[2:]
             return ((loss,) + output) if loss is not None else output
 
-        # for rfa_layer in self.bert.encoder.layer:
-        #     rw = rfa_layer.attention.self.repara_w
-        #     loss += ((rw ** 2).mean(dim=-1) ** 0.5).mean() * 0.01
-
-
         return SequenceClassifierOutput(
             loss=loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+        )
+
+
+class FfnForSequenceGeneration(FfnPreTrainedModel):
+    def __init__(self, config):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+        self.config = config
+
+        self.bert = FfnModel(config)
+        self.cls = FfnOnlyMLMHead(config)
+
+        # Initialize weights and apply final processing
+        self.init_weights()
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+    ):
+        r"""
+        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+            Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[0, ...,
+            config.num_labels - 1]`. If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
+            If :obj:`config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        pooled_output = outputs[0]
+
+        prediction_scores = self.cls(pooled_output)
+
+        lm_loss = None
+        if labels is not None:
+            # we are doing next-token prediction; shift prediction scores and input ids by one
+
+            # shifted_prediction_scores = prediction_scores[:, :-1, :].contiguous()
+            # labels = labels[:, 1:].contiguous()
+            shifted_prediction_scores = prediction_scores.contiguous()
+            labels = labels.contiguous()
+            loss_fct = CrossEntropyLoss()
+            lm_loss = loss_fct(
+                shifted_prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+
+        if not return_dict:
+            output = (prediction_scores,) + outputs[1:]
+            return ((lm_loss,) + output) if lm_loss is not None else output
+
+        return CausalLMOutputWithCrossAttentions(
+            loss=lm_loss,
+            logits=prediction_scores,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            cross_attentions=outputs.cross_attentions,
         )
