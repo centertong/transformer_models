@@ -40,8 +40,11 @@ python run/train_klue.py --config configs/model/bert.json --name bert \
 Training Environment: Google Colab Pro Plus
 
 Batch size = 15
+
 max sequence length = 512
+
 During 10 epoch training, select best performance for validation set.  
+
 tokenizer was created with kowiki dataset by huggingface tokenizers library.
 
 |Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)| Memory Usage(GB) | seq/sec |
