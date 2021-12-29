@@ -15,6 +15,7 @@ from transformers import PreTrainedTokenizerFast, PretrainedConfig
 from tokenizers import Tokenizer
 from models import (
     BertForSequenceGeneration,
+    KvtForSequenceGeneration,
     PerformerForSequenceClassification,
     RfaForSequenceClassification,
     LiteForSequenceClassification,
@@ -24,6 +25,7 @@ from models import (
     ScatterBrainForSequenceClassification,
     AbcForSequenceClassification,
     ScalingForSequenceClassification,
+    MemEffForSequenceGeneration,
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -79,6 +81,8 @@ def getModel(config_path):
         return AbcForSequenceClassification(config)
     if config.model_type == "scaling":
         return ScalingForSequenceClassification(config)
+    if config.model_type == "mem_eff":
+        return MemEffForSequenceGeneration(config)
     
 
 def main():

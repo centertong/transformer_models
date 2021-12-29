@@ -28,4 +28,5 @@ from .luna2 import Luna2ForSequenceClassification
 from .scatterbrain import *
 from .abc import *
 from .scaling import *
-from .mem_eff import BertForSequenceClassification2
+from .mem_eff import * 
+from .kvt import *

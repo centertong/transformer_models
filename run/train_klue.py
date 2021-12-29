@@ -25,7 +25,8 @@ from models import (
     ScatterBrainForSequenceClassification,
     AbcForSequenceClassification,
     ScalingForSequenceClassification,
-    BertForSequenceClassification2
+    KvtForSequenceClassification,
+    MemEffForSequenceClassification,
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -116,7 +117,9 @@ def getModel(config_path, num_labels):
     if config.model_type == "scaling":
         return ScalingForSequenceClassification(config)
     if config.model_type == "mem_eff":
-        return BertForSequenceClassification2(config)
+        return MemEffForSequenceClassification(config)
+    if config.model_type == "kvt":
+        return KvtForSequenceClassification(config)
     
 
 def main():

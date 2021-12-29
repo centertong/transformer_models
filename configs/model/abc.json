@@ -22,5 +22,5 @@
 	"use_cache": true,
 	"vocab_size": 32000,
 	"classifier_dropout": null,
-	"is_casual": false
+	"is_causal": false
 }

@@ -39,11 +39,11 @@ def is_tokenizers_available():
 
 
 if is_torch_available():
-    from .modeling_mem_eff import (
-        MemEffForMaskedLM,
-        MemEffLayer,
-        MemEffModel,
-        MemEffPreTrainedModel,
-        MemEffForSequenceClassification,
-        MemEffForSequenceGeneration,
+    from .modeling_kvt import (
+        KvtForMaskedLM,
+        KvtLayer,
+        KvtModel,
+        KvtPreTrainedModel,
+        KvtForSequenceClassification,
+        KvtForSequenceGeneration,
     )

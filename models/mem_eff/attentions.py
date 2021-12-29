@@ -11,9 +11,6 @@ def MultiHeadChunkAttention(query, key, value, chunk_size=128, mask=None, dropou
 
 
     def summarize_chunk(query, key, value, mask, dropout, head_mask):
-
-
-    
         attn_weights = torch.einsum('...id, ...jcd-> ...ijc', query, key)
 
         if mask is not None:

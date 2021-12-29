@@ -45,7 +45,7 @@ from transformers.modeling_utils import (
 from transformers import logging
 
 from .embeddings import Embeddings
-from .attentions import MultiHeadChunkAttention
+from .attentions import MultiHeadKnnAttention
 
 
 logger = logging.get_logger(__name__)
@@ -73,8 +73,8 @@ class SelfAttentionLayer(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
-        self.is_casual = config.is_casual
-        self.chunk_size = config.chunk_size
+        self.is_causal = config.is_causal
+        self.knn_size = config.knn_size
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[
@@ -94,8 +94,16 @@ class SelfAttentionLayer(nn.Module):
         key_layer = self.transpose_for_scores(self.key(hidden_states))
         value_layer = self.transpose_for_scores(self.value(hidden_states))
 
+        if attention_mask is None:
+            attention_mask = torch.zeros((1, 1, query_layer.size(-2), query_layer.size(-2)), device=query_layer.device, requires_grad=False)
+
+        if self.is_causal:
+            trimask = torch.ones((query_layer.size(-2), query_layer.size(-2)), device=query_layer.device, requires_grad=False)
+            trimask = torch.tril(trimask)[None, None, :, :]
+            attention_mask = attention_mask * trimask
+
         # Take the dot product between "query" and "key" to get the raw attention scores.
-        context_layer = MultiHeadChunkAttention(query_layer, key_layer, value_layer, self.chunk_size, attention_mask, self.dropout, head_mask)
+        context_layer = MultiHeadKnnAttention(query_layer, key_layer, value_layer, self.knn_size, attention_mask, self.dropout, head_mask)
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[
@@ -189,7 +197,7 @@ class FeedForwardModule(nn.Module):
         return hidden_states
 
 
-class BertLayer(nn.Module):
+class KvtLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
@@ -223,11 +231,11 @@ class BertLayer(nn.Module):
         return outputs
 
 
-class BertEncoder(nn.Module):
+class KvtEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([BertLayer(config)
+        self.layer = nn.ModuleList([KvtLayer(config)
                                    for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
@@ -319,7 +327,7 @@ class BertEncoder(nn.Module):
         )
 
 
-class BertPooler(nn.Module):
+class KvtPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -334,7 +342,7 @@ class BertPooler(nn.Module):
         return pooled_output
 
 
-class BertPredictionHeadTransform(nn.Module):
+class KvtPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -352,10 +360,10 @@ class BertPredictionHeadTransform(nn.Module):
         return hidden_states
 
 
-class BertLMPredictionHead(nn.Module):
+class KvtLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.transform = BertPredictionHeadTransform(config)
+        self.transform = KvtPredictionHeadTransform(config)
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
@@ -373,23 +381,23 @@ class BertLMPredictionHead(nn.Module):
         return hidden_states
 
 
-class BertOnlyMLMHead(nn.Module):
+class KvtOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.predictions = BertLMPredictionHead(config)
+        self.predictions = KvtLMPredictionHead(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
 
-class BertPreTrainedModel(PreTrainedModel):
+class KvtPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    # config_class = BertConfig
+    # config_class = KvtConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -413,11 +421,11 @@ class BertPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, BertEncoder):
+        if isinstance(module, KvtEncoder):
             module.gradient_checkpointing = value
 
 
-class BertModel(BertPreTrainedModel):
+class KvtModel(KvtPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -436,9 +444,9 @@ class BertModel(BertPreTrainedModel):
         self.config = config
 
         self.embeddings = Embeddings(config)
-        self.encoder = BertEncoder(config)
+        self.encoder = KvtEncoder(config)
 
-        self.pooler = BertPooler(config) if add_pooling_layer else None
+        self.pooler = KvtPooler(config) if add_pooling_layer else None
 
         self.init_weights()
 
@@ -597,7 +605,7 @@ class BertModel(BertPreTrainedModel):
         )
 
 
-class BertForMaskedLM(BertPreTrainedModel):
+class KvtForMaskedLM(KvtPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
     _keys_to_ignore_on_load_missing = [
@@ -608,12 +616,12 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         if config.is_decoder:
             logger.warning(
-                "If you want to use `BertForMaskedLM` make sure `config.is_decoder=False` for "
+                "If you want to use `KvtForMaskedLM` make sure `config.is_decoder=False` for "
                 "bi-directional self-attention."
             )
 
-        self.bert = BertModel(config, add_pooling_layer=False)
-        self.cls = BertOnlyMLMHead(config)
+        self.bert = KvtModel(config, add_pooling_layer=False)
+        self.cls = KvtOnlyMLMHead(config)
 
         self.init_weights()
 
@@ -699,13 +707,13 @@ class BertForMaskedLM(BertPreTrainedModel):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
-class BertForSequenceClassification2(BertPreTrainedModel):
+class KvtForSequenceClassification(KvtPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = BertModel(config)
+        self.bert = KvtModel(config)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )
@@ -788,14 +796,14 @@ class BertForSequenceClassification2(BertPreTrainedModel):
         )
 
 
-class BertForSequenceGeneration2(BertPreTrainedModel):
+class KvtForSequenceGeneration(KvtPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = BertModel(config)
-        self.cls = BertOnlyMLMHead(config)
+        self.bert = KvtModel(config)
+        self.cls = KvtOnlyMLMHead(config)
 
         # Initialize weights and apply final processing
         self.init_weights()

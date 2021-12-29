@@ -15,6 +15,7 @@ Linear Complexity Transformers Test using KLUE dataset
 * abc: ATTENTION WITH BOUNDED-MEMORY CONTROL
 * scaling: Scaling Transformers [work in progress]
 * mem_eff: SELF-ATTENTION DOES NOT NEED O(n2) MEMORY
+* KVT: k-NN Attention for Boosting Vision Transformers
 
 ## Usages
 
@@ -36,21 +37,27 @@ python run/train_klue.py --config configs/model/bert.json --name bert \
 
 ### KLUE Dataset (STS, NLI, TC)
 
+Training Environment: Google Colab Pro Plus
+
+Batch size = 15
+max sequence length = 512
 During 10 epoch training, select best performance for validation set.  
 tokenizer was created with kowiki dataset by huggingface tokenizers library.
 
-|Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)|
-|-----|---|---|---|
-|Transformer Encoder|0.776|0.416|0.382|
-|Performer|0.750| - |0.340|
-|rfa|0.774|0.416|0.377|
-|lite|0.769|0.388|0.402|
-|aft|0.732| - |0.374|
-|luna|0.562|0.356|0.397|
-|fastformer|0.775|0.363|0.422|
-|scatterbrain|0.447|0.377|0.345|
-|abc|0.768| - |0.403|
-|scaling|0.733| - | - |
+|Model|TC(MacroF1)|STS(Accuracy)|NLI(Pearson)| Memory Usage(GB) | seq/sec |
+|-----|---|---|---|---|---|
+|Transformer Encoder|0.776|0.416|0.382| - | - |
+|Performer|0.750| - |0.340| - | - |
+|rfa|0.774|0.416|0.377| - | - |
+|lite|0.769|0.388|0.402| - | - |
+|aft|0.732| - |0.374| - | - |
+|luna|0.562|0.356|0.397| - | - |
+|fastformer|0.775|0.363|0.422| - | - |
+|scatterbrain|0.447|0.377|0.345| - | - |
+|abc|0.768| - |0.403| - | - |
+|scaling|0.733| - | - | - | - |
+|mem_eff|0.748| - | - | - | - |
+|kvt|0.727|0.076| - |14.15|54.75|
 
 ## Reference
 
@@ -68,6 +75,7 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 12. [ABC: ATTENTION WITH BOUNDED-MEMORY CONTROL][12]
 13. [Sparse is Enough in Scaling Transformers][13]
 14. [SELF-ATTENTION DOES NOT NEED O(n2) MEMORY] [14]
+15. [KVT: k-NN Attention for Boosting Vision Transformers] [15]
 
 [1]: https://github.com/huggingface/transformers
 [2]: https://github.com/huggingface/tokenizers
@@ -83,3 +91,4 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 [12]: https://arxiv.org/abs/2110.02488
 [13]: https://arxiv.org/abs/2111.12763
 [14]: https://arxiv.org/abs/2112.05682
+[15]: https://arxiv.org/abs/2106.00515
