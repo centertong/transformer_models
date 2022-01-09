@@ -25,5 +25,5 @@
 	"gumbel_prob": 0.3,
 	"attn_sparsity": 16,
 	"kernel_size": 3,
-	"qkv_mode": "conv"
+	"qkv_mode": "base"
 }

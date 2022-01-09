@@ -27,6 +27,7 @@ import torch.utils.checkpoint
 from packaging import version
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+import torch.utils.checkpoint as checkpoint
 
 from transformers.activations import ACT2FN
 from transformers.file_utils import (
@@ -93,7 +94,6 @@ class MultiplicativeConvAttentionLayer(nn.Module):
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
 
-
     def forward(
         self,
         hidden_states,
@@ -144,9 +144,6 @@ class MultiplicativeAttentionLayer(nn.Module):
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute")
 
-    def transpose_for_scores(self, x):
-        return x.permute(0, 2, 1, 3)
-
     def forward(
         self,
         hidden_states,
@@ -173,7 +170,6 @@ class MultiplicativeAttentionLayer(nn.Module):
             context_layer,)
 
         return outputs
-
 
 
 class SkipConnectionLayer(nn.Module):
