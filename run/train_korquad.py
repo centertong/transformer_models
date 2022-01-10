@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=12)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--name", type=str, default="model")
     parser.add_argument("--max_len", type=int, default=512)
     parser.add_argument("--train_data", type=str, default="data/korquad/KorQuAD_v1.0_train.json")
@@ -86,7 +87,7 @@ def main():
     model = getModel(args.config, num_labels)
 
     # optimizer = Adafactor(model.parameters(), lr= 1e-3, relative_step=False)
-    optimizer = AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     trainer = KorQuADtrainer(model, tokenizer, optimizer, model_name=args.name, device=args.device,
                           checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)

@@ -962,9 +962,6 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             start_positions = start_positions.clamp(0, ignored_index)
             end_positions = end_positions.clamp(0, ignored_index)
 
-            start_logits = nn.Sigmoid()(start_logits)
-            end_logits = nn.Sigmoid()(end_logits)
-
             loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
