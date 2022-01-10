@@ -204,8 +204,11 @@ class Trainer(object):
             with torch.no_grad():
                 output = self.model(
                     inputs, attention_mask=inputs_mask, labels=labels)
+            
+            if output.get("logits") is not None:
+                preds = output.logits 
+                self.metric(preds, labels)
 
-            preds = output.logits
             tmp_eval_loss = output.loss
 
             if self.n_gpu > 1:
@@ -214,7 +217,6 @@ class Trainer(object):
             eval_loss += tmp_eval_loss.item()
             eval_steps += 1
 
-            self.metric(preds, labels)
             total_eval_loss = eval_loss/eval_steps
 
             logging.info(

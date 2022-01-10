@@ -950,6 +950,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             start_positions, end_positions = labels[:, 0], labels[:, 1]
 
         total_loss = None
+
         if start_positions is not None and end_positions is not None:
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
@@ -960,6 +961,9 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             ignored_index = start_logits.size(1)
             start_positions = start_positions.clamp(0, ignored_index)
             end_positions = end_positions.clamp(0, ignored_index)
+
+            start_logits = nn.Sigmoid()(start_logits)
+            end_logits = nn.Sigmoid()(end_logits)
 
             loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
             start_loss = loss_fct(start_logits, start_positions)
