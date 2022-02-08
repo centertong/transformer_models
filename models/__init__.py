@@ -34,3 +34,4 @@ from .ffn import *
 from .fmmformer import *
 from .realformer import *
 from .canine import *
+from .rela import *
