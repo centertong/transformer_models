@@ -28,7 +28,8 @@ from models import (
     KvtForSequenceClassification,
     MemEffForSequenceClassification,
     FfnForSequenceClassification,
-    FmmForSequenceClassification
+    FmmForSequenceClassification,
+    RealformerForSequenceClassification,
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -39,11 +40,11 @@ import argparse
 
 
 class KlueTrainer(trainer.Trainer):
-    def __init__(self, type, model, tokenizer, optimizer, device=None,
+    def __init__(self, type, model, tokenizer, optimizer, scheduler, device=None,
                  train_batch_size=12, test_batch_size=None,
                  checkpoint_path=None, model_name=None,
                  log_dir='./logs'):
-        super().__init__(model, tokenizer, optimizer, device,
+        super().__init__(model, tokenizer, optimizer, scheduler, device,
                          train_batch_size, test_batch_size, checkpoint_path, model_name)
 
         self.type = type
@@ -131,6 +132,8 @@ def getModel(config_path, num_labels):
         return FfnForSequenceClassification(config)
     if config.model_type == "fmmformer":
         return FmmForSequenceClassification(config)
+    if config.model_type == "realformer":
+        return RealformerForSequenceClassification(config)
 
 
 def main():
@@ -160,8 +163,11 @@ def main():
 
     # optimizer = Adafactor(model.parameters(), lr= 1e-3, relative_step=False)
     optimizer = AdamW(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer,  # Optimzer
+                                              step_size=len(train_dataset) // args.batch_size,  # Gamma 비율로 줄일 스텝사이즈
+                                              gamma=0.9)
 
-    trainer = KlueTrainer(args.type, model, tokenizer, optimizer, model_name=args.name, device=args.device,
+    trainer = KlueTrainer(args.type, model, tokenizer, optimizer, scheduler, model_name=args.name, device=args.device,
                           checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)
 
     # tokenizer.save("test.json")

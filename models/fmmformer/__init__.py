@@ -16,21 +16,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
 
-from .bert import *
-from .performer import *
-from .rfa import *
-from .lite import *
-from .aft import *
-from .fastformer import *
-from .luna import *
-from .luna2 import Luna2ForSequenceClassification
-from .scatterbrain import *
-from .abc import *
-from .scaling import *
-from .mem_eff import *
-from .kvt import *
-from .ffn import *
-from .fmmformer import *
-from .realformer import *
-from .canine import *
+# _LazyModule, is_tokenizers_available, is_torch_available
+from transformers.file_utils import is_torch_available
+from transformers import logging
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+try:
+    import tokenizers
+    _tokenizers_available = True  # pylint: disable=invalid-name
+    logger.info("Tokenizers version {} available.".format(
+        tokenizers.__version__))
+except ImportError:
+    _tokenizers_available = False  # pylint: disable=invalid-name
+
+
+def is_tokenizers_available():
+    return _tokenizers_available
+
+
+if is_torch_available():
+    from .modeling_fmm import (
+        FmmForMaskedLM,
+        FmmLayer,
+        FmmModel,
+        FmmPreTrainedModel,
+        FmmForSequenceClassification,
+    )

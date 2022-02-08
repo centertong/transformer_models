@@ -35,11 +35,11 @@ from utils import metrics, trainer
 import argparse
 
 class AutoRegressiveTrainer(trainer.Trainer):
-    def __init__(self, model, tokenizer, optimizer, device=None,
+    def __init__(self, model, tokenizer, optimizer, scheduler, device=None,
                     train_batch_size = 12, test_batch_size =None,
                     checkpoint_path =None, model_name=None,
                  log_dir='./logs'):
-        super().__init__(model, tokenizer, optimizer, device, train_batch_size, test_batch_size, checkpoint_path, model_name)
+        super().__init__(model, tokenizer, optimizer, scheduler, device, train_batch_size, test_batch_size, checkpoint_path, model_name)
         
         self.log_dir = log_dir
         logging.basicConfig(filename=f'{log_dir}/{self.model_name}-{datetime.now().date()}.log', level=logging.INFO)
@@ -103,8 +103,11 @@ def main():
     
     # optimizer = Adafactor(model.parameters(), lr= 1e-3, relative_step=False)
     optimizer = AdamW(model.parameters(), lr= 1e-4, weight_decay= 1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer,  # Optimzer
+                                              step_size=int(len(dataset) * 0.9) // args.batch_size,  # Gamma 비율로 줄일 스텝사이즈
+                                              gamma=0.9)
         
-    trainer = AutoRegressiveTrainer(model, tokenizer, optimizer,model_name=args.name, device=args.device, checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)
+    trainer = AutoRegressiveTrainer(model, tokenizer, optimizer, scheduler, model_name=args.name, device=args.device, checkpoint_path=args.save_path, train_batch_size=args.batch_size, test_batch_size=args.batch_size * 2)
 
     #tokenizer.save("test.json")
     

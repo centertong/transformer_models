@@ -18,6 +18,22 @@ except ImportError:
     pass
 
 
+class WarmupScheduler(torch.optim.lr_scheduler.LambdaLR):
+    """ Linear warmup and then constant.
+        Linearly increases learning rate schedule from 0 to 1 over `warmup_steps` training steps.
+        Keeps learning rate schedule equal to 1. after warmup_steps.
+    """
+    def __init__(self, optimizer, warmup_steps=10000, last_epoch=-1):
+        
+
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return float(step) / float(max(1.0, warmup_steps))
+            return 0.99 ** step
+
+        super(WarmupScheduler, self).__init__(optimizer, lr_lambda, last_epoch=last_epoch)
+
+
 def getDevice(device):
     chk = False
 
@@ -35,13 +51,14 @@ def getDevice(device):
 
 
 class Trainer(object):
-    def __init__(self, model, tokenizer, optimizer, device=None,
+    def __init__(self, model, tokenizer, optimizer, scheduler, device=None,
                  train_batch_size=12, test_batch_size=32,
                  checkpoint_path=None, model_name=None,
                  **kwargs):
         self.model = model
         self.tokenizer = tokenizer
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self.train_batch_size = train_batch_size
         self.test_batch_size = test_batch_size
         if test_batch_size is None:
@@ -52,6 +69,7 @@ class Trainer(object):
 
         self.device, self.n_gpu, self.tpu = getDevice(device)
         print(self.device)
+        self.model.to(self.device)
 
         # logging.basicConfig(filename=f'{log_dir}/{self.model_name}-{datetime.now().date()}.log', level=logging.INFO)
 
@@ -96,15 +114,14 @@ class Trainer(object):
                 start_step = global_steps if start_epoch == 0 else global_steps * \
                     self.train_batch_size % len(self.train_loader)
 
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-                self.optimizer.load_state_dict(
-                    checkpoint['optimizer_state_dict'])
+                self.model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         if self.n_gpu > 1:
             self.model = nn.DataParallel(self.model)
             logging.info(f'{datetime.now()} | Utilizing {self.n_gpu} GPUs')
 
-        self.model.to(self.device)
         logging.info(f'{datetime.now()} | Moved model to: {self.device}')
         logging.info(
             f'{datetime.now()} | train_batch_size: {self.train_batch_size} | eval_batch_size: {self.test_batch_size}')
@@ -112,8 +129,6 @@ class Trainer(object):
             f'{datetime.now()} | Epochs: {epochs} | log_steps: {log_steps} | ckpt_steps: {ckpt_steps}')
         logging.info(
             f'{datetime.now()} | gradient_accumulation_steps: {gradient_accumulation_steps}')
-
-        # self.evaluate(self.eval_loader)
 
         self.model.train()
 
@@ -156,6 +171,7 @@ class Trainer(object):
                         self.optimizer.step()
 
                     self.model.zero_grad()
+                    self.scheduler.step()
 
                 if global_steps % log_steps == 0:
                     pb.set_postfix_str(
@@ -167,7 +183,7 @@ class Trainer(object):
                     local_steps = 0
                 if self.checkpoint_path:
                     if global_steps % ckpt_steps == 0:
-                        self.save(epoch, self.model, self.optimizer,
+                        self.save(epoch, self.model, self.optimizer, self.scheduler,
                                   losses, global_steps)
                         logging.info(
                             f'{datetime.now()} | Saved checkpoint to: {self.checkpoint_path}')
@@ -178,7 +194,7 @@ class Trainer(object):
             self.model.train()
             start_step = 0
 
-        self.save(epochs, self.model, self.optimizer, losses, global_steps)
+        self.save(epochs, self.model, self.optimizer, self.scheduler, losses, global_steps)
 
         return self.model
 
@@ -204,9 +220,12 @@ class Trainer(object):
             with torch.no_grad():
                 output = self.model(
                     inputs, attention_mask=inputs_mask, labels=labels)
-            
+
             if output.get("logits") is not None:
-                preds = output.logits 
+                preds = output.logits
+                self.metric(preds, labels)
+            elif output.get("start_logits") is not None:
+                preds = [output.start_logits, output.end_logits]
                 self.metric(preds, labels)
 
             tmp_eval_loss = output.loss
@@ -226,7 +245,7 @@ class Trainer(object):
                     f'{datetime.now()} | Step: {step} | Eval Loss: {total_eval_loss}\n')
                 results_file.close()
 
-        print(eval_loss / eval_steps)
+        print(eval_loss / len(dataloader))
         self.print_metric()
 
     def metric(self, preds=None, labels=None):
@@ -235,12 +254,13 @@ class Trainer(object):
     def print_metric(self,):
         pass
 
-    def save(self, epoch, model, optimizer, losses, train_step):
+    def save(self, epoch, model, optimizer, scheduler, losses, train_step):
         if self.checkpoint_path:
             torch.save({
                 'epoch': epoch,  # 현재 학습 epoch
                 'model_state_dict': model.state_dict(),  # 모델 저장
                 'optimizer_state_dict': optimizer.state_dict(),  # 옵티마이저 저장
+                'scheduler_state_dict': scheduler.state_dict(),  
                 'losses': losses,  # Loss 저장
                 'train_step': train_step,  # 현재 진행한 학습
             }, f'{self.checkpoint_path}/{self.model_name}.pth')
