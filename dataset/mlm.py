@@ -181,7 +181,7 @@ class DatasetForCanineMLM(Dataset):
 
     def _tokenize_input_ids(self, input_ids: list, pad_to_max_length: bool = True):
         #inputs = torch.tensor(self.tokenizer.encode(input_ids, add_special_tokens=False, max_length=self.max_len, padding=pad_to_max_length, return_tensors='pt',truncation=True))
-        inputs = [1] + [ord(c) for c in input_ids] + [2]
+        inputs = [1] + [ord(c) for c in input_ids if ord(c) < 65536] + [2]
         if len(inputs) < self.max_len:
             pad_size = self.max_len - len(inputs)
             inputs = inputs + [0] * pad_size

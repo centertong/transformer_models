@@ -25,7 +25,6 @@ import torch.utils.checkpoint
 from packaging import version
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-import torch.nn.functional as F
 
 from transformers.activations import ACT2FN
 from transformers.file_utils import (
@@ -46,13 +45,10 @@ from transformers.modeling_utils import (
 )
 from transformers import logging
 
-from .embeddings import Embeddings, CanineEmbedding
-from einops import repeat, rearrange
+from .embeddings import Embeddings
 
 
 logger = logging.get_logger(__name__)
-
-
 
 
 class SelfAttentionLayer(nn.Module):
@@ -104,7 +100,7 @@ class SelfAttentionLayer(nn.Module):
         attention_scores = attention_scores / \
             math.sqrt(self.attention_head_size)
         if attention_mask is not None:
-            # Apply the attention mask is (precomputed for all layers in CanineModel forward() function)
+            # Apply the attention mask is (precomputed for all layers in HT1dModel forward() function)
             if self.is_causal:
                 trimask = torch.ones(
                     (query_layer.size(-2), query_layer.size(-2)), device=query_layer.device)
@@ -217,7 +213,7 @@ class FeedForwardModule(nn.Module):
         return hidden_states
 
 
-class CanineLayer(nn.Module):
+class HT1dLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
@@ -251,12 +247,11 @@ class CanineLayer(nn.Module):
         return outputs
 
 
-
-class CanineEncoder(nn.Module):
+class HT1dEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([CanineLayer(config)
+        self.layer = nn.ModuleList([HT1dLayer(config)
                                    for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
 
@@ -348,7 +343,7 @@ class CanineEncoder(nn.Module):
         )
 
 
-class CaninePooler(nn.Module):
+class HT1dPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -363,7 +358,7 @@ class CaninePooler(nn.Module):
         return pooled_output
 
 
-class CaninePredictionHeadTransform(nn.Module):
+class HT1dPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
@@ -381,17 +376,17 @@ class CaninePredictionHeadTransform(nn.Module):
         return hidden_states
 
 
-class CanineLMPredictionHead(nn.Module):
+class HT1dLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.transform = CaninePredictionHeadTransform(config)
+        self.transform = HT1dPredictionHeadTransform(config)
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
         self.decoder = nn.Linear(
             config.hidden_size, config.vocab_size, bias=False)
 
-        self.bias = nn.parameter.Parameter(torch.zeros(config.vocab_size))
+        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
 
         # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
         self.decoder.bias = self.bias
@@ -402,23 +397,23 @@ class CanineLMPredictionHead(nn.Module):
         return hidden_states
 
 
-class CanineOnlyMLMHead(nn.Module):
+class HT1dOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.predictions = CanineLMPredictionHead(config)
+        self.predictions = HT1dLMPredictionHead(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
 
-class CaninePreTrainedModel(PreTrainedModel):
+class HT1dPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    # config_class = CanineConfig
+    # config_class = HT1dConfig
     base_model_prefix = "bert"
     supports_gradient_checkpointing = True
     _keys_to_ignore_on_load_missing = [r"position_ids"]
@@ -442,55 +437,11 @@ class CaninePreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, CanineEncoder):
+        if isinstance(module, HT1dEncoder):
             module.gradient_checkpointing = value
 
 
-class Downsampling(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.kernel_size = config.kernel_size
-        self.layer = CanineLayer(config)
-        self.conv = nn.Conv1d(config.hidden_size, config.hidden_size, kernel_size=config.kernel_size, stride=config.kernel_size)
-
-    def forward(self, hidden_states, attention_mask=None):
-        # hidden_states: B L D
-        init_states = self.layer(hidden_states, attention_mask)[0]
-        attention_mask = attention_mask.squeeze(1)
-        attention_mask_bool = attention_mask < 0
-        
-        attention_mask_bool = attention_mask_bool.permute(0, 2, 1)
-        init_states.masked_fill_(attention_mask_bool, 0.)
-        hidden_states = init_states.permute(0,2,1)
-        hidden_states = self.conv(hidden_states).permute(0,2,1)
-        attention_mask = F.max_pool1d(attention_mask, kernel_size=self.kernel_size).detach()
-        attention_mask = attention_mask.unsqueeze(1)
-
-        return hidden_states, attention_mask, init_states
-
-
-class Upsampling(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.kernel_size = config.kernel_size
-        self.layer = CanineLayer(config)
-        self.conv = nn.Conv1d(config.hidden_size * 2, config.hidden_size, kernel_size=config.kernel_size, padding="same")
-
-    def forward(self, hidden_states, init_states):
-        hidden_states = repeat(hidden_states, 'b l d -> b r l d', r = self.kernel_size)
-        hidden_states = rearrange(hidden_states, 'b r l d -> b (r l) d')
-        up_states = torch.cat([hidden_states, init_states], dim=-1)
-
-        up_states = up_states.permute(0, 2, 1)
-        up_states = self.conv(up_states)
-        up_states = up_states.permute(0, 2, 1)
-
-        up_states = self.layer(up_states)[0]
-        
-        return up_states
-
-
-class CanineModel(CaninePreTrainedModel):
+class HT1dModel(HT1dPreTrainedModel):
     """
 
     The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
@@ -508,12 +459,26 @@ class CanineModel(CaninePreTrainedModel):
         super().__init__(config)
         self.config = config
 
-        self.embeddings = CanineEmbedding(config)
-        self.down = Downsampling(config)
-        self.encoder = CanineEncoder(config)
-        self.up = Upsampling(config)
+        self.embeddings = Embeddings(config)
+        self.encoder = HT1dEncoder(config)
 
-        self.pooler = CaninePooler(config) if add_pooling_layer else None
+        self.pooler = HT1dPooler(config) if add_pooling_layer else None
+
+        self.init_weights()
+
+    def get_input_embeddings(self):
+        return self.embeddings.word_embeddings
+
+    def set_input_embeddings(self, value):
+        self.embeddings.word_embeddings = value
+
+    def _prune_heads(self, heads_to_prune):
+        """
+        Prunes heads of the model. heads_to_prune: dict of {layer_num: list of heads to prune in this layer} See base
+        class PreTrainedModel
+        """
+        for layer, heads in heads_to_prune.items():
+            self.encoder.layer[layer].attention.prune_heads(heads)
 
     def forward(
         self,
@@ -627,10 +592,9 @@ class CanineModel(CaninePreTrainedModel):
             inputs_embeds=inputs_embeds,
             past_key_values_length=past_key_values_length,
         )
-        down_output = self.down(embedding_output, extended_attention_mask)
         encoder_outputs = self.encoder(
-            down_output[0],
-            attention_mask=down_output[1],
+            embedding_output,
+            attention_mask=extended_attention_mask,
             head_mask=head_mask,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_extended_attention_mask,
@@ -643,8 +607,6 @@ class CanineModel(CaninePreTrainedModel):
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(
             sequence_output) if self.pooler is not None else None
-
-        sequence_output = self.up(sequence_output, down_output[2])
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]
@@ -659,7 +621,7 @@ class CanineModel(CaninePreTrainedModel):
         )
 
 
-class CanineForMaskedLM(CaninePreTrainedModel):
+class HT1dForMaskedLM(HT1dPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
     _keys_to_ignore_on_load_missing = [
@@ -670,12 +632,20 @@ class CanineForMaskedLM(CaninePreTrainedModel):
 
         if config.is_decoder:
             logger.warning(
-                "If you want to use `CanineForMaskedLM` make sure `config.is_decoder=False` for "
+                "If you want to use `HT1dForMaskedLM` make sure `config.is_decoder=False` for "
                 "bi-directional self-attention."
             )
 
-        self.bert = CanineModel(config, add_pooling_layer=False)
-        self.cls = CanineOnlyMLMHead(config)
+        self.bert = HT1dModel(config, add_pooling_layer=False)
+        self.cls = HT1dOnlyMLMHead(config)
+
+        self.init_weights()
+
+    def get_output_embeddings(self):
+        return self.cls.predictions.decoder
+
+    def set_output_embeddings(self, new_embeddings):
+        self.cls.predictions.decoder = new_embeddings
 
     def forward(
         self,
@@ -719,11 +689,7 @@ class CanineForMaskedLM(CaninePreTrainedModel):
         prediction_scores = self.cls(sequence_output)
 
         masked_lm_loss = None
-        
-
         if labels is not None:
-            if prediction_scores.size(-1) <= labels.max():
-                print(prediction_scores.size(-1), labels.max())
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
             masked_lm_loss = loss_fct(
                 prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
@@ -757,13 +723,13 @@ class CanineForMaskedLM(CaninePreTrainedModel):
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
-class CanineForSequenceClassification(CaninePreTrainedModel):
+class HT1dForSequenceClassification(HT1dPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = CanineModel(config)
+        self.bert = HT1dModel(config)
         classifier_dropout = (
             config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
         )
@@ -846,14 +812,14 @@ class CanineForSequenceClassification(CaninePreTrainedModel):
         )
 
 
-class CanineForSequenceGeneration(CaninePreTrainedModel):
+class HT1dForSequenceGeneration(HT1dPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
 
-        self.bert = CanineModel(config)
-        self.cls = CanineOnlyMLMHead(config)
+        self.bert = HT1dModel(config)
+        self.cls = HT1dOnlyMLMHead(config)
 
         # Initialize weights and apply final processing
         self.init_weights()
@@ -921,7 +887,7 @@ class CanineForSequenceGeneration(CaninePreTrainedModel):
         )
 
 
-class CanineForQuestionAnswering(CaninePreTrainedModel):
+class HT1dForQuestionAnswering(HT1dPreTrainedModel):
 
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
 
@@ -929,10 +895,11 @@ class CanineForQuestionAnswering(CaninePreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
 
-        self.bert = CanineModel(config, add_pooling_layer=False)
+        self.bert = HT1dModel(config, add_pooling_layer=False)
         self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
 
-
+        # Initialize weights and apply final processing
+        self.post_init()
     def forward(
         self,
         input_ids=None,
