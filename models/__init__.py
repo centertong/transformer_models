@@ -35,3 +35,4 @@ from .fmmformer import *
 from .realformer import *
 from .canine import *
 from .rela import *
+from .ht1d import *

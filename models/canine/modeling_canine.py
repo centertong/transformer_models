@@ -476,16 +476,20 @@ class Upsampling(nn.Module):
         self.layer = CanineLayer(config)
         self.conv = nn.Conv1d(config.hidden_size * 2, config.hidden_size, kernel_size=config.kernel_size, padding="same")
 
-    def forward(self, hidden_states, init_states):
-        hidden_states = repeat(hidden_states, 'b l d -> b r l d', r = self.kernel_size)
+    def forward(self, hidden_states, init_states, attention_mask=None):
+        hidden_states = repeat(hidden_states, 'b l d -> b l r d', r = self.kernel_size)
         hidden_states = rearrange(hidden_states, 'b r l d -> b (r l) d')
         up_states = torch.cat([hidden_states, init_states], dim=-1)
+
+        attention_mask_bool = attention_mask < 0
+        attention_mask_bool = attention_mask_bool.squeeze(1).permute(0, 2, 1)
+        up_states.masked_fill_(attention_mask_bool, 0.)
 
         up_states = up_states.permute(0, 2, 1)
         up_states = self.conv(up_states)
         up_states = up_states.permute(0, 2, 1)
 
-        up_states = self.layer(up_states)[0]
+        up_states = self.layer(up_states, attention_mask)[0]
         
         return up_states
 
@@ -644,7 +648,7 @@ class CanineModel(CaninePreTrainedModel):
         pooled_output = self.pooler(
             sequence_output) if self.pooler is not None else None
 
-        sequence_output = self.up(sequence_output, down_output[2])
+        sequence_output = self.up(sequence_output, down_output[2], extended_attention_mask)
 
         if not return_dict:
             return (sequence_output, pooled_output) + encoder_outputs[1:]

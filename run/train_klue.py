@@ -30,6 +30,7 @@ from models import (
     FfnForSequenceClassification,
     FmmForSequenceClassification,
     RealformerForSequenceClassification,
+    HT1dForSequenceClassification,
 )
 
 #from models.bert import BertConfig, BertForMaskedLM
@@ -134,6 +135,8 @@ def getModel(config_path, num_labels):
         return FmmForSequenceClassification(config)
     if config.model_type == "realformer":
         return RealformerForSequenceClassification(config)
+    if config.model_type == "ht1d":
+        return HT1dForSequenceClassification(config)
 
 
 def main():

@@ -61,6 +61,7 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 |scaling|0.733| - | - |25.15|
 |mem_eff|0.748| - | - |11.57|
 |kvt|0.727|0.076| - |16.17|
+|HT1d| - | - | - |11.50|
 
 ## Reference
 
@@ -79,6 +80,7 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 13. [Sparse is Enough in Scaling Transformers][13]
 14. [SELF-ATTENTION DOES NOT NEED O(n2) MEMORY][14]
 15. [KVT: k-NN Attention for Boosting Vision Transformers][15]
+16. [H-Transformer-1D: Fast One-Dimensional Hierarchical Attention for Sequences][16]
 
 [1]: https://github.com/huggingface/transformers
 [2]: https://github.com/huggingface/tokenizers
@@ -95,3 +97,4 @@ tokenizer was created with kowiki dataset by huggingface tokenizers library.
 [13]: https://arxiv.org/abs/2111.12763
 [14]: https://arxiv.org/abs/2112.05682
 [15]: https://arxiv.org/abs/2106.00515
+[16]: https://arxiv.org/abs/2107.11906
